@@ -1,0 +1,8 @@
+{
+  "name": "elite-network-intelligence",
+  "version": "0.2.0",
+  "private": true,
+  "description": "Multi-tenant network intelligence and monitoring platform",
+  "workspaces": ["frontend"],
+  "scripts": {"dev": "npm --workspace frontend run dev", "build": "npm --workspace frontend run build", "preview": "npm --workspace frontend run preview" }
+}
