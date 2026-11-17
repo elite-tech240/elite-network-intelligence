@@ -11,8 +11,11 @@ from pathlib import Path
 # Load installer-generated configuration before reading environment settings.
 _config_dir = Path(sys.executable).resolve().parent if getattr(sys, "frozen", False) else Path(__file__).resolve().parent
 _config_candidates = [
+    Path(os.environ["ELITE_AGENT_CONFIG"]) if os.environ.get("ELITE_AGENT_CONFIG") else _config_dir / "__no_explicit_config__",
     _config_dir / "agent-config.json",
     Path(os.environ.get("PROGRAMDATA", r"C:\ProgramData")) / "EliteNetworkIntelligence" / "Agent" / "agent-config.json",
+    Path("/etc/elite-network-intelligence/agent-config.json"),
+    Path("/Library/Preferences/EliteNetworkIntelligence/agent-config.json"),
 ]
 for _config_file in _config_candidates:
     if _config_file.exists():
@@ -27,6 +30,7 @@ for _config_file in _config_candidates:
 
 import psutil
 import requests
+from collectors.host import collect_host_metrics
 
 API_URL = os.getenv("ELITE_API_URL", "http://127.0.0.1:8000").rstrip("/")
 ENROLLMENT_TOKEN = os.getenv("ELITE_ENROLLMENT_TOKEN", "")
@@ -58,7 +62,7 @@ def enroll():
     payload = {
         "enrollment_token": ENROLLMENT_TOKEN, "site_id": SITE_ID,
         "hostname": socket.gethostname(),
-        "device_type": "server" if platform.system() != "Windows" else "workstation",
+        "device_type": "server" if platform.system() == "Linux" else "workstation",
         "os_name": platform.system(), "os_version": platform.release(),
         "ip_address": local_ip(), "mac_addresses": mac_addresses(),
     }
@@ -127,6 +131,18 @@ def poll_snmp_target(state, target):
 
 
 
+def report_interfaces(state, interfaces):
+    """Send bounded, normalized interface inventory and counters to the trusted API."""
+    response = requests.post(
+        f"{API_URL}/agents/{state['device_id']}/interfaces/report",
+        json={"interfaces": interfaces[:64]},
+        headers={"Authorization": f"Bearer {state['device_token']}"},
+        timeout=20,
+    )
+    response.raise_for_status()
+    return response.json()
+
+
 def schedule_windows_uninstall():
     """Launch the registered Inno Setup uninstaller after this service exits."""
     if os.name != "nt":
@@ -161,15 +177,13 @@ def main():
         state = enroll()
 
     while True:
-        cpu = psutil.cpu_percent(interval=1)
-        memory = psutil.virtual_memory().percent
-        disk = psutil.disk_usage(os.path.abspath(os.sep)).percent
-        counters = psutil.net_io_counters()
+        snapshot = collect_host_metrics()
         payload = {
-            "status": "online", "cpu_percent": cpu, "memory_percent": memory,
-            "disk_percent": disk, "bytes_sent": counters.bytes_sent,
-            "bytes_recv": counters.bytes_recv,
+            "status": "online", "cpu_percent": snapshot["cpu_percent"],
+            "memory_percent": snapshot["memory_percent"], "disk_percent": snapshot["disk_percent"],
+            "bytes_sent": snapshot["bytes_sent"], "bytes_recv": snapshot["bytes_recv"],
         }
+        print("Collected", len(snapshot["interfaces"]), "network interfaces on", snapshot["platform"])
         try:
             response = requests.post(
                 f"{API_URL}/agents/{state['device_id']}/heartbeat",
@@ -182,6 +196,11 @@ def main():
             response.raise_for_status()
             result = response.json()
             print("Endpoint telemetry accepted")
+            try:
+                interface_result = report_interfaces(state, snapshot.get("interfaces", []))
+                print("Interface telemetry accepted:", interface_result.get("accepted", 0))
+            except requests.RequestException as exc:
+                print("Interface telemetry delivery failed:", exc)
             if any(c.get("command") == "uninstall" for c in result.get("commands", [])):
                 if schedule_windows_uninstall():
                     return

@@ -1,5 +1,5 @@
 #define AppName "Elite Network Intelligence Agent"
-#define AppVersion "0.2.0"
+#define AppVersion "0.3.0"
 [Setup]
 AppId={{A1D3D4B1-93F1-4C86-9F15-8B91E84E1A20}
 AppName={#AppName}
@@ -9,6 +9,7 @@ DefaultDirName={autopf}\Elite Network Intelligence\Agent
 DefaultGroupName=Elite Network Intelligence
 OutputDir=..\dist
 OutputBaseFilename=EliteNetworkAgent-Setup
+SetupIconFile=elite-network-icon.ico
 ArchitecturesInstallIn64BitMode=x64
 PrivilegesRequired=admin
 UninstallDisplayIcon={app}\EliteNetworkAgent.exe
