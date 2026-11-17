@@ -1,0 +1,14 @@
+<service>
+  <id>EliteNetworkAgent</id>
+  <name>Elite Network Intelligence Agent</name>
+  <description>Collects endpoint health and network telemetry for Elite Network Intelligence.</description>
+  <executable>%BASE%\EliteNetworkAgent.exe</executable>
+  <workingdirectory>%BASE%</workingdirectory>
+  <startmode>Automatic</startmode>
+  <stoptimeout>15sec</stoptimeout>
+  <onfailure action="restart" delay="10 sec" />
+  <log mode="roll-by-size">
+    <sizeThreshold>10240</sizeThreshold>
+    <keepFiles>5</keepFiles>
+  </log>
+</service>
