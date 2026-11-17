@@ -4,22 +4,27 @@
 
 - Revoke anonymous and authenticated default table/sequence privileges, then grant only the current frontend's required permissions.
 - Keep device credentials, enrollment tokens, SNMP target secrets, and pending agent commands backend-only.
+- Add an explicit deny-all RLS policy to pending agent commands; service_role remains the only runtime actor.
 - Restrict alert event client updates to status and acknowledgement timestamp.
 - Keep organization identifiers immutable through column-level update grants for sites, networks, and alert rules.
 - Scope workspace read policies to the authenticated role and use scalar-subquery `auth.uid()` evaluation.
 - Add covering indexes for networks.organization_id and pending_agent_commands.requested_by.
-- Preserve the no-policy RLS behavior on pending_agent_commands: client requests fail closed.
+
+## Automated database assertions
+
+Run `supabase/tests/phase_0_security_assertions.sql` after applying migrations. It checks:
+- no anonymous table privileges across public application tables;
+- RLS enabled on every public application table;
+- no browser access to credentials, enrollment tokens, SNMP secrets, or queued commands;
+- no cross-tenant organization_id updates through the browser;
+- service_role retains backend access to protected command/credential tables.
 
 ## Validation checklist
 
-- Verify anon has no table privileges on public application tables.
-- Verify authenticated has only the expected CRUD privileges.
-- Verify service_role retains backend access to protected tables.
-- Verify RLS remains enabled on all 12 public application tables.
 - Re-run Supabase security/performance advisors.
 - Run frontend TypeScript/Vite production build.
 - Smoke-test sign-in, workspace reads, site/network CRUD, alert rule CRUD, alert acknowledgement, device archive/restore/uninstall authorization, and agent enrollment/heartbeat.
-- Verify cross-organization access is denied with two test users from separate organizations.
+- Verify cross-organization access is denied with two test users from separate organizations. The connected production workspace currently has only one organization, so the two-tenant isolation test still requires a dedicated test tenant and test user.
 
 ## Manual dashboard item
 
