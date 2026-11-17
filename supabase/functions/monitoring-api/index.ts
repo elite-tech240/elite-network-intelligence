@@ -1,0 +1,170 @@
+import "jsr:@supabase/functions-js/edge-runtime.d.ts";
+import { createClient } from "npm:@supabase/supabase-js@2.49.1";
+
+const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
+const SUPABASE_ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY")!;
+const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+const admin = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false, autoRefreshToken: false } });
+
+const corsHeaders = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+  "Content-Type": "application/json",
+};
+
+const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: corsHeaders });
+const fail = (message: string, status = 400) => json({ detail: message }, status);
+
+async function hashToken(token: string): Promise<string> {
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(token));
+  return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+function randomToken(bytes = 32): string {
+  const data = crypto.getRandomValues(new Uint8Array(bytes));
+  return btoa(String.fromCharCode(...data)).replaceAll("+", "-").replaceAll("/", "_").replaceAll("=", "");
+}
+async function signedInUser(req: Request) {
+  const auth = req.headers.get("Authorization") || "";
+  if (!auth.toLowerCase().startsWith("bearer ")) return null;
+  const userClient = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+    global: { headers: { Authorization: auth } },
+    auth: { persistSession: false, autoRefreshToken: false },
+  });
+  const { data, error } = await userClient.auth.getUser();
+  return error ? null : data.user;
+}
+async function membership(userId: string, organizationId: string) {
+  const { data } = await admin.from("organization_members").select("role")
+    .eq("organization_id", organizationId).eq("user_id", userId).maybeSingle();
+  return data;
+}
+
+Deno.serve(async (req: Request) => {
+  if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
+  const path = new URL(req.url).pathname.replace(/^.*\/monitoring-api/, "") || "/";
+  if (req.method === "GET" && path === "/health") return json({ status: "ok", service: "elite-monitoring-api", version: "1.0.0" });
+
+  if (req.method === "POST" && path === "/enrollment-tokens") {
+    const user = await signedInUser(req);
+    if (!user) return fail("Valid user session required", 401);
+    const body = await req.json();
+    const organizationId = String(body.organization_id || "");
+    const siteId = String(body.site_id || "");
+    const member = await membership(user.id, organizationId);
+    if (!member || !["owner", "admin", "operator"].includes(member.role)) return fail("You do not have permission to enroll devices", 403);
+    const { data: site } = await admin.from("sites").select("id").eq("id", siteId).eq("organization_id", organizationId).maybeSingle();
+    if (!site) return fail("Site not found in this workspace", 404);
+    const token = randomToken(36);
+    const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+    const { error } = await admin.from("enrollment_tokens").insert({
+      organization_id: organizationId, site_id: siteId, token_hash: await hashToken(token),
+      label: String(body.label || "Agent enrollment").slice(0, 100), expires_at: expiresAt,
+    });
+    if (error) return fail("Could not create enrollment token", 500);
+    return json({ token, expires_at: expiresAt, site_id: siteId, warning: "Copy this token now. It will not be shown again." });
+  }
+
+  if (req.method === "POST" && path === "/agents/enroll") {
+    const body = await req.json();
+    const token = String(body.enrollment_token || "");
+    const siteId = String(body.site_id || "");
+    const hostname = String(body.hostname || "").trim();
+    if (token.length < 24 || !siteId || !hostname) return fail("Enrollment token, site and hostname are required");
+    const { data: enrollment } = await admin.from("enrollment_tokens").select("id,organization_id,site_id,expires_at,revoked_at")
+      .eq("token_hash", await hashToken(token)).maybeSingle();
+    if (!enrollment) return fail("Invalid enrollment token", 401);
+    if (enrollment.revoked_at || (enrollment.expires_at && new Date(enrollment.expires_at).getTime() <= Date.now())) return fail("Enrollment token expired or revoked", 401);
+    if (enrollment.site_id !== siteId) return fail("Token is not authorized for this site", 403);
+    const deviceToken = randomToken(48);
+    const { data: device, error: deviceError } = await admin.from("devices").insert({
+      organization_id: enrollment.organization_id, site_id: siteId, hostname: hostname.slice(0, 255),
+      device_type: String(body.device_type || "unknown").slice(0, 80),
+      os_name: body.os_name ? String(body.os_name).slice(0, 120) : null,
+      os_version: body.os_version ? String(body.os_version).slice(0, 120) : null,
+      ip_address: body.ip_address || null, mac_addresses: Array.isArray(body.mac_addresses) ? body.mac_addresses.slice(0, 16) : [],
+      status: "online", last_seen_at: new Date().toISOString(),
+    }).select("id,hostname").single();
+    if (deviceError || !device) return fail("Device registration failed", 500);
+    const { error: credentialError } = await admin.from("device_credentials").insert({ device_id: device.id, token_hash: await hashToken(deviceToken) });
+    if (credentialError) {
+      await admin.from("devices").delete().eq("id", device.id);
+      return fail("Could not create device credential", 500);
+    }
+    return json({ device, device_token: deviceToken, warning: "Store this device token securely. It is only returned once." });
+  }
+
+  const heartbeatMatch = path.match(/^\/agents\/([0-9a-f-]+)\/heartbeat$/i);
+  if (req.method === "POST" && heartbeatMatch) {
+    const deviceId = heartbeatMatch[1];
+    const auth = req.headers.get("Authorization") || "";
+    if (!auth.toLowerCase().startsWith("bearer ")) return fail("Bearer device token required", 401);
+    const deviceToken = auth.slice(7).trim();
+    const { data: credential } = await admin.from("device_credentials").select("device_id,revoked_at")
+      .eq("device_id", deviceId).eq("token_hash", await hashToken(deviceToken)).maybeSingle();
+    if (!credential || credential.revoked_at) return fail("Invalid or revoked device credential", 401);
+    const { data: device } = await admin.from("devices").select("id,organization_id,hostname").eq("id", deviceId).maybeSingle();
+    if (!device) return fail("Device not found", 404);
+    const body = await req.json();
+    const numeric = (v: unknown) => v == null ? null : Number(v);
+    for (const key of ["cpu_percent", "memory_percent", "disk_percent"]) {
+      const v = numeric(body[key]);
+      if (v !== null && (!Number.isFinite(v) || v < 0 || v > 100)) return fail("Invalid metric value");
+    }
+    const now = new Date().toISOString();
+    const metrics = {
+      organization_id: device.organization_id, device_id: deviceId,
+      cpu_percent: numeric(body.cpu_percent), memory_percent: numeric(body.memory_percent),
+      disk_percent: numeric(body.disk_percent), bytes_sent: numeric(body.bytes_sent),
+      bytes_recv: numeric(body.bytes_recv), recorded_at: now,
+    };
+    const [{ error: metricError }, { error: deviceError }, { error: credentialUpdateError }] = await Promise.all([
+      admin.from("device_metrics").insert(metrics),
+      admin.from("devices").update({ status: body.status === "degraded" ? "degraded" : "online", last_seen_at: now }).eq("id", deviceId),
+      admin.from("device_credentials").update({ last_used_at: now }).eq("device_id", deviceId),
+    ]);
+    if (metricError || deviceError || credentialUpdateError) return fail("Could not persist device telemetry", 500);
+    const { data: rules } = await admin.from("alert_rules").select("id,name,metric,operator,threshold")
+      .eq("organization_id", device.organization_id).eq("enabled", true);
+    for (const rule of rules || []) {
+      const value = metrics[rule.metric as "cpu_percent" | "memory_percent" | "disk_percent"];
+      if (value == null || rule.threshold == null) continue;
+      const breached = rule.operator === "gte" ? value >= rule.threshold : value > rule.threshold;
+      if (!breached) continue;
+      const { data: active } = await admin.from("alert_events").select("id").eq("device_id", deviceId)
+        .eq("rule_id", rule.id).eq("status", "open").limit(1);
+      if (!active?.length) {
+        await admin.from("alert_events").insert({
+          organization_id: device.organization_id, device_id: deviceId, rule_id: rule.id,
+          severity: value >= Math.min(100, rule.threshold + 15) ? "critical" : "warning",
+          title: rule.name + ": " + device.hostname,
+          message: rule.metric + " reached " + value.toFixed(1) + "% (threshold " + rule.threshold + "%).",
+        });
+      }
+    }
+    return json({ ok: true, device_id: deviceId, recorded_at: now });
+  }
+
+  if (req.method === "POST" && path === "/team/invite") {
+    const user = await signedInUser(req);
+    if (!user) return fail("Valid user session required", 401);
+    const body = await req.json();
+    const organizationId = String(body.organization_id || "");
+    const email = String(body.email || "").trim().toLowerCase();
+    const role = String(body.role || "viewer");
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return fail("Enter a valid email address");
+    if (!["admin", "operator", "viewer"].includes(role)) return fail("Invalid workspace role");
+    const member = await membership(user.id, organizationId);
+    if (!member || !["owner", "admin"].includes(member.role)) return fail("Only owners and admins can invite members", 403);
+    if (member.role === "admin" && role === "admin") return fail("Only the owner can grant admin access", 403);
+    const { data: inviteData, error: inviteError } = await admin.auth.admin.inviteUserByEmail(email);
+    if (inviteError || !inviteData.user) return fail("Invitation could not be sent. Check Auth email/SMTP settings or whether this user already exists.", 502);
+    const { error: memberError } = await admin.from("organization_members").insert({
+      organization_id: organizationId, user_id: inviteData.user.id, role,
+    });
+    if (memberError) return fail("Invitation sent, but workspace membership could not be assigned. Contact the owner.", 500);
+    return json({ ok: true, email, role });
+  }
+
+  return fail("Route not found", 404);
+});
