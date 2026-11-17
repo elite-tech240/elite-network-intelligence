@@ -84,6 +84,12 @@ class HeartbeatPayload(BaseModel):
     bytes_recv: int | None = Field(default=None, ge=0)
 
 
+class TeamInviteRequest(BaseModel):
+    organization_id: str
+    email: str = Field(min_length=5, max_length=320)
+    role: Literal['admin', 'operator', 'viewer'] = 'viewer'
+
+
 class AlertRulePayload(BaseModel):
     name: str = Field(min_length=1, max_length=120)
     metric: Literal["cpu_percent", "memory_percent", "disk_percent"]
@@ -228,6 +234,36 @@ def heartbeat(device_id: str, payload: HeartbeatPayload, authorization: str | No
             }).execute()
 
     return {"ok": True, "device_id": device_id, "recorded_at": now}
+
+
+@app.post("/api/v1/team/invite")
+def invite_team_member(payload: TeamInviteRequest, user=Depends(current_user)):
+    client = db()
+    membership = client.table("organization_members").select("role").eq(
+        "organization_id", payload.organization_id
+    ).eq("user_id", str(user.id)).limit(1).execute()
+    if not membership.data or membership.data[0]["role"] not in ("owner", "admin"):
+        raise HTTPException(status_code=403, detail="Only workspace owners and admins can invite members")
+    if membership.data[0]["role"] == "admin" and payload.role == "admin":
+        raise HTTPException(status_code=403, detail="Only the owner can grant admin access")
+    try:
+        invited = client.auth.admin.invite_user_by_email(payload.email.strip().lower())
+        invited_user = getattr(invited, "user", None)
+        if not invited_user:
+            invited_user = getattr(getattr(invited, "data", None), "user", None)
+        if not invited_user:
+            raise RuntimeError("Supabase Auth did not return the invited user")
+        client.table("organization_members").insert({
+            "organization_id": payload.organization_id,
+            "user_id": str(invited_user.id),
+            "role": payload.role,
+        }).execute()
+    except Exception as exc:
+        message = str(exc)
+        if "duplicate" in message.lower() or "already" in message.lower():
+            raise HTTPException(status_code=409, detail="This user is already a member or has already been invited")
+        raise HTTPException(status_code=502, detail="Invitation could not be sent. Check Supabase Auth email/SMTP settings.")
+    return {"ok": True, "email": payload.email.strip().lower(), "role": payload.role}
 
 
 @app.post("/api/v1/alert-rules")
