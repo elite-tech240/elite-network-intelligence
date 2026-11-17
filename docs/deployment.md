@@ -2,22 +2,28 @@
 
 ## Supabase
 
-1. Use the Supabase project created for Elite Network Intelligence.
-2. Apply `supabase/migrations/0001_initial_schema.sql` then `0002_tenant_reference_integrity.sql`.
-3. Create the first organization and owner membership through a trusted administrative process. Do not expose the service-role key to browsers.
-4. Configure backend secrets: `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, and a strong `ENROLLMENT_TOKEN_SECRET`.
+1. Use project `pkaihrushsdxebfoyiis`.
+2. Apply migrations `0001` through `0007` in filename order. These create tenant-scoped sites/networks, device credentials, endpoint metrics, alert rules/events, and backend-only SNMP credential storage.
+3. Deploy the Edge Function source at `supabase/functions/monitoring-api/index.ts` as `monitoring-api` with JWT verification disabled. The function verifies user JWTs itself on user-only routes and uses per-device high-entropy bearer credentials for agent heartbeats.
+4. Supabase provides the function's server-side `SUPABASE_SERVICE_ROLE_KEY`; never copy it into frontend or agent configuration.
+5. Configure Auth SMTP and the invite email template before using Team Management. The Auth leaked-password protection advisor should also be enabled in Supabase Auth settings.
 
 ## Vercel frontend
 
-- Import the GitHub repository and set Root Directory to `frontend`.
-- Framework preset: Vite; Build command: `npm run build`; Output directory: `dist`.
-- Add `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`, and (when API integration is enabled) `VITE_API_URL`.
-- The Supabase publishable/anon key is intended for browser use with RLS. Never use the service-role key here.
+- Root Directory: `frontend`; Framework: Vite; Build: `npm run build`; Output: `dist`.
+- Required variables: `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`, and `VITE_API_URL=https://pkaihrushsdxebfoyiis.supabase.co/functions/v1/monitoring-api`.
+- The Supabase publishable key is intended for browser use with RLS. Never use a service-role or secret key in frontend variables.
 
-## API hosting
+## Endpoint agents
 
-The FastAPI service is a separate process. Deploy it to a Python-capable host, configure the environment variables from `backend/.env.example`, restrict CORS to the frontend origin, and put it behind HTTPS. The current heartbeat route deliberately returns 501 until per-device credentials are implemented.
+Use **Sites & Networks → Enroll a monitoring agent** to generate a one-time, 24-hour token. Follow `agent/README.md` for Windows PowerShell and Linux installation. The agent stores a unique device credential locally after first enrollment. Revoke the device credential in the backend before deleting the local state file and re-enrolling.
 
-## Before production
+## Separate FastAPI development service
 
-Complete user signup/invitation and organization provisioning, test RLS with multiple tenants, implement device credential verification and token rotation, add rate limits/audit logs, and perform a security review. The agent currently sends basic host inventory only; it does not perform network scanning or remote administration.
+`backend/` contains an optional FastAPI implementation for local testing and non-Edge hosting. Configure `backend/.env.example` values on a trusted server only. Production frontend requests currently use the Supabase Edge Function.
+
+## Current production scope and gaps
+
+Implemented: login, organization membership roles, Sites & Networks, one-time enrollment, per-device credential hashes, authenticated heartbeat, CPU/memory/disk and cumulative endpoint network counters, threshold-based alert rules/events, event acknowledgement, and owner/admin email invitations.
+
+Not implemented yet: SNMP polling of routers/switches, packet-flow analytics, network discovery/topology mapping, automatic offline detection/scheduled jobs, credential rotation/revocation UI, audit log, rate limiting, multi-tenant automated security tests, and formal penetration/security review. Host counters must not be described as router-wide or per-flow traffic. Do not use the system for remote control or security response actions.
