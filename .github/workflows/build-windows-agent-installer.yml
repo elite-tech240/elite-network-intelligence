@@ -1,0 +1,70 @@
+name: Build Windows Agent Installer
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'agent/**'
+      - '.github/workflows/build-windows-agent-installer.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows-installer:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install agent dependencies and packager
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r agent/requirements.txt pyinstaller==6.11.1
+
+      - name: Build standalone agent executable
+        shell: pwsh
+        run: |
+          pyinstaller --noconfirm --clean --onefile --name EliteNetworkAgent agent/agent.py
+          New-Item -ItemType Directory -Force agent/build | Out-Null
+          Copy-Item dist/EliteNetworkAgent.exe agent/build/EliteNetworkAgent.exe
+
+      - name: Download WinSW service wrapper
+        shell: pwsh
+        run: |
+          Invoke-WebRequest -Uri https://github.com/winsw/winsw/releases/download/v2.12.0/WinSW-x64.exe -OutFile agent/build/EliteNetworkAgentService.exe
+
+      - name: Install Inno Setup
+        uses: crazy-max/ghaction-chocolatey@v3
+        with:
+          args: install innosetup --no-progress
+
+      - name: Compile installer
+        shell: pwsh
+        run: |
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" agent/installer/EliteNetworkAgent.iss
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Upload installer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: EliteNetworkAgent-Windows-Installer
+          path: agent/dist/EliteNetworkAgent-Setup.exe
+          if-no-files-found: error
+
+      - name: Publish installer release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: agent-installer-v0.1.0
+          name: Elite Network Agent Installer v0.1.0
+          body: Windows x64 installer. The dashboard creates a separate one-time enrollment configuration for each install package.
+          files: agent/dist/EliteNetworkAgent-Setup.exe
+          make_latest: false
+          fail_on_unmatched_files: true
