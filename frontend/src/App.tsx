@@ -1,5 +1,5 @@
 import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
-import { Activity, Bell, Boxes, Cable, ChevronDown, CircleHelp, LayoutDashboard, LogOut, Network, Search, Settings, ShieldCheck, Wifi, Zap, LockKeyhole, Eye, EyeOff, RefreshCw, MapPin, Server, ArrowUpRight, UserRound, KeyRound } from 'lucide-react';
+import { Activity, Bell, Boxes, Cable, ChevronDown, CircleHelp, LayoutDashboard, LogOut, Network, Search, Settings, ShieldCheck, Wifi, Zap, LockKeyhole, Eye, EyeOff, MapPin, Server, ArrowUpRight, UserRound, KeyRound } from 'lucide-react';
 import { createClient, type Session, type SupabaseClient, type User } from '@supabase/supabase-js';
 
 type Device = { id: string; hostname: string; ip_address: string | null; status: string; device_type: string | null; last_seen_at: string | null; site_id?: string; archived_at?: string | null };
@@ -67,6 +67,18 @@ export default function App() {
   }, []);
 
   useEffect(() => { if (session?.user) void loadWorkspace(session.user); else { setMembership(null); setDevices([]); setArchivedDevices([]); setSites([]); setNetworks([]); } }, [session?.user?.id, loadWorkspace]);
+
+  useEffect(() => {
+    if (!supabase || !session?.user || !membership?.organization_id) return;
+    const orgId = membership.organization_id;
+    const channel = supabase.channel('workspace-live-' + orgId)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'devices', filter: 'organization_id=eq.' + orgId }, () => { void loadWorkspace(session.user); })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'sites', filter: 'organization_id=eq.' + orgId }, () => { void loadWorkspace(session.user); })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'networks', filter: 'organization_id=eq.' + orgId }, () => { void loadWorkspace(session.user); })
+      .subscribe();
+    const timer = window.setInterval(() => { void loadWorkspace(session.user); }, 15000);
+    return () => { window.clearInterval(timer); void supabase.removeChannel(channel); };
+  }, [session?.user?.id, membership?.organization_id, loadWorkspace]);
   useEffect(() => { const onPop = () => setPage(pageFromPath()); window.addEventListener('popstate', onPop); return () => window.removeEventListener('popstate', onPop); }, []);
   const go = (label: string) => { const item = nav.find(n => n.label === label); const path = item?.path ?? (label === 'Settings' ? '/settings' : '/'); window.history.pushState({}, '', path); setPage(label); };
   const signIn = async (e: FormEvent) => { e.preventDefault(); if (!supabase) return; setBusy(true); setAuthError(''); setNotice(''); const { error } = await supabase.auth.signInWithPassword({ email: email.trim(), password }); if (error) setAuthError(error.message); setBusy(false); };
@@ -94,7 +106,7 @@ export default function App() {
     <main className="main">
       <header className="topbar"><div className="crumb">Workspace <span>/</span> <b>{page}</b></div><div className="top-actions"><div className="search"><Search size={15}/><span>Search anything...</span><kbd>⌘ K</kbd></div><button className="icon-btn" onClick={() => go('Alerts')}><Bell size={18}/><i/></button><div className="avatar small">{(session.user.email?.[0] ?? 'U').toUpperCase()}</div></div></header>
       <section className="content">
-        <div className="page-heading"><div><div className="eyebrow">NETWORK OPERATIONS CENTER</div><h1>{title}</h1><p>{pageDescription(page)}</p></div><button className="date-button" onClick={refresh}><RefreshCw size={14}/> Refresh</button></div>
+        <div className="page-heading"><div><div className="eyebrow">NETWORK OPERATIONS CENTER</div><h1>{title}</h1><p>{pageDescription(page)}</p></div></div>
         {notice && <div className="notice-banner">{notice}<button onClick={() => setNotice('')}>Dismiss</button></div>}
         {!membership ? <div className="panel access-panel"><div className="empty-icon"><LockKeyhole size={23}/></div><h2>No workspace access yet</h2><p>Your account is signed in, but it has not been added to an organization. Ask the system owner to assign your account.</p></div> : <>
           {dataError && <div className="error-banner">Could not load workspace data: {dataError}</div>}
@@ -164,7 +176,7 @@ function Overview({devices,sites,networks,online,loading,go}:{devices:Device[];s
 function DevicesPage({devices,archivedDevices,loading,organizationId,role,accessToken,onRefresh}:{devices:Device[];archivedDevices:Device[];loading:boolean;organizationId:string;role:Membership['role'];accessToken:string;onRefresh:()=>void}) {
  const [filter,setFilter]=useState('all'),[metrics,setMetrics]=useState<any[]>([]),[actionError,setActionError]=useState(''),[actionMessage,setActionMessage]=useState(''),[busyDevice,setBusyDevice]=useState(''),[tab,setTab]=useState('inventory');
  const filtered=useMemo(()=>devices.filter(d=>filter==='all'||deviceStatus(d)===filter),[devices,filter]);
- useEffect(()=>{let active=true;if(!supabase)return;supabase.from('device_metrics').select('device_id,cpu_percent,memory_percent,disk_percent,recorded_at').eq('organization_id',organizationId).order('recorded_at',{ascending:false}).limit(250).then(({data})=>{if(active)setMetrics(data??[]);});return()=>{active=false;};},[organizationId,devices.length]);
+ useEffect(()=>{let active=true;if(!supabase)return;const loadMetrics=()=>{supabase.from('device_metrics').select('device_id,cpu_percent,memory_percent,disk_percent,recorded_at').eq('organization_id',organizationId).order('recorded_at',{ascending:false}).limit(250).then(({data})=>{if(active)setMetrics(data??[]);});};void loadMetrics();const timer=window.setInterval(loadMetrics,15000);return()=>{active=false;window.clearInterval(timer);};},[organizationId,devices.length]);
  const latest=new Map<string,any>();metrics.forEach(m=>{if(!latest.has(m.device_id))latest.set(m.device_id,m);});
  const canManage=['owner','admin'].includes(role);
  const action=async(id:string,kind:'archive'|'restore'|'uninstall')=>{const device=[...devices,...archivedDevices].find(d=>d.id===id);if(!device)return;if(kind==='archive'&&deviceStatus(device)!=='offline'){setActionError('Only offline devices can be archived.');return;}if(kind==='uninstall'&&deviceStatus(device)!=='online'){setActionError('Remote uninstall requires an online device.');return;}const prompts={archive:'Archive this offline device? History will be retained.',restore:'Restore this device to active inventory?',uninstall:'Send remote uninstall to this online Windows agent? Local agent files and credentials will be removed; history remains.'};if(!window.confirm(prompts[kind]))return;setBusyDevice(id);setActionError('');setActionMessage('');try{const response=await fetch(apiUrl+'/devices/'+id+'/'+kind,{method:'POST',headers:{Authorization:'Bearer '+accessToken}});const body=await response.json();if(!response.ok)throw new Error(body.detail||'Device action failed');setActionMessage(kind==='uninstall'?'Uninstall queued. The agent will remove itself on its next heartbeat.':kind==='archive'?'Device archived. History retained.':'Device restored.');onRefresh();}catch(e){setActionError(e instanceof Error?e.message:'Device action failed.');}finally{setBusyDevice('');}};
@@ -187,7 +199,7 @@ function TopologyPage({sites,networks,devices}:{sites:Site[];networks:Net[];devi
 }
 function TrafficPage({organizationId}:{organizationId:string}) {
  const [rows,setRows]=useState<any[]>([]),[tab,setTab]=useState('all');
- useEffect(()=>{let active=true;if(!supabase)return;supabase.from('device_metrics').select('device_id,bytes_sent,bytes_recv,recorded_at,devices(hostname,device_type)').eq('organization_id',organizationId).order('recorded_at',{ascending:false}).limit(100).then(({data})=>{if(active)setRows(data??[]);});return()=>{active=false;};},[organizationId]);
+ useEffect(()=>{let active=true;if(!supabase)return;const loadRows=()=>{supabase.from('device_metrics').select('device_id,bytes_sent,bytes_recv,recorded_at,devices(hostname,device_type)').eq('organization_id',organizationId).order('recorded_at',{ascending:false}).limit(100).then(({data})=>{if(active)setRows(data??[]);});};void loadRows();const channel=supabase.channel('traffic-live-'+organizationId).on('postgres_changes',{event:'*',schema:'public',table:'device_metrics',filter:'organization_id=eq.'+organizationId},()=>{void loadRows();}).subscribe();const timer=window.setInterval(loadRows,15000);return()=>{active=false;window.clearInterval(timer);void supabase.removeChannel(channel);};},[organizationId]);
  return <div className="sites-workspace"><PageTabs items={[{id:'all',label:'All counters'},{id:'sent',label:'Outbound'},{id:'received',label:'Inbound'}]} active={tab} onChange={setTab}/><section className="panel page-panel"><div className="panel-head"><div><h3>Network interface counters</h3><p>Cumulative host counters and aggregate SNMP interface octets, not per-flow packet inspection.</p></div></div><div className="table-wrap"><table><thead><tr><th>DEVICE</th><th>TYPE</th>{tab!=='received'&&<th>BYTES SENT</th>}{tab!=='sent'&&<th>BYTES RECEIVED</th>}<th>REPORTED AT</th></tr></thead><tbody>{rows.map((r,i)=>{const d=Array.isArray(r.devices)?r.devices[0]:r.devices;return <tr key={r.device_id+r.recorded_at+i}><td>{d?.hostname??r.device_id.slice(0,8)}</td><td>{d?.device_type??'device'}</td>{tab!=='received'&&<td>{r.bytes_sent==null?'—':Number(r.bytes_sent).toLocaleString()}</td>}{tab!=='sent'&&<td>{r.bytes_recv==null?'—':Number(r.bytes_recv).toLocaleString()}</td>}<td>{new Date(r.recorded_at).toLocaleString()}</td></tr>;})}{!rows.length&&<tr><td colSpan={5} className="empty">No network counters received yet.</td></tr>}</tbody></table></div></section></div>;
 }
 function AlertsPage({organizationId,role}:{organizationId:string;role:Membership['role']}) {
@@ -195,7 +207,7 @@ function AlertsPage({organizationId,role}:{organizationId:string;role:Membership
  const [name,setName]=useState('High CPU'),[metric,setMetric]=useState('cpu_percent'),[threshold,setThreshold]=useState('85'),[operator,setOperator]=useState('gt'),[editingId,setEditingId]=useState('');
  const [error,setError]=useState(''),[busy,setBusy]=useState(false);const canManage=['owner','admin','operator'].includes(role);
  const load=useCallback(async()=>{if(!supabase)return;const [a,b]=await Promise.all([supabase.from('alert_events').select('id,title,message,severity,status,triggered_at').eq('organization_id',organizationId).order('triggered_at',{ascending:false}).limit(100),supabase.from('alert_rules').select('id,name,metric,operator,threshold,enabled').eq('organization_id',organizationId).order('created_at',{ascending:false})]);if(!a.error)setEvents(a.data??[]);if(!b.error)setRules(b.data??[]);},[organizationId]);
- useEffect(()=>{void load();},[load]);
+ useEffect(()=>{void load();const channel=supabase?.channel('alerts-live-'+organizationId).on('postgres_changes',{event:'*',schema:'public',table:'alert_events',filter:'organization_id=eq.'+organizationId},()=>{void load();}).on('postgres_changes',{event:'*',schema:'public',table:'alert_rules',filter:'organization_id=eq.'+organizationId},()=>{void load();}).subscribe();const timer=window.setInterval(()=>{void load();},15000);return()=>{window.clearInterval(timer);if(channel&&supabase)void supabase.removeChannel(channel);};},[load,organizationId]);
  const reset=()=>{setEditingId('');setName('High CPU');setMetric('cpu_percent');setThreshold('85');setOperator('gt');setError('');};
  const edit=(r:any)=>{setEditingId(r.id);setName(r.name);setMetric(r.metric);setThreshold(String(r.threshold??85));setOperator(r.operator??'gt');setTab('rules');};
  const save=async(e:FormEvent)=>{e.preventDefault();if(!supabase)return;setBusy(true);setError('');const payload={name:name.trim(),metric,operator,threshold:metric==='device_offline'?null:Number(threshold),enabled:true};const result=editingId?await supabase.from('alert_rules').update(payload).eq('id',editingId).eq('organization_id',organizationId):await supabase.from('alert_rules').insert({...payload,organization_id:organizationId});setBusy(false);if(result.error){setError(result.error.message);return;}reset();await load();};
