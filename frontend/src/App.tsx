@@ -124,7 +124,6 @@ function Overview({devices,sites,networks,online,loading,go}:{devices:Device[];s
  const offline=Math.max(0,devices.length-online);
  const availability=devices.length?Math.round((online/devices.length)*100):0;
  const workstation=devices.filter(d=>d.device_type==='workstation').length;
- const server=devices.filter(d=>d.device_type==='server').length;
  const recent=devices.slice(0,6);
  return <div className="overview-v2">
   <div className="overview-toolbar"><div><span className="overview-kicker">LIVE INFRASTRUCTURE</span><h2>Network operations</h2><p>Real-time snapshot of your managed environment</p></div><div className="overview-live"><i/> Live inventory</div></div>
@@ -243,5 +242,4 @@ function PageTabs({items,active,onChange}:{items:{id:string;label:string}[];acti
  return <div className="page-tabs" role="tablist">{items.map(v=><button key={v.id} type="button" role="tab" aria-selected={active===v.id} className={active===v.id?'page-tab active':'page-tab'} onClick={()=>onChange(v.id)}>{v.label}</button>)}</div>;
 }
 
-function Stat({icon,label,value,change,tone}:{icon:React.ReactNode,label:string,value:string,change:string,tone:string}) { return <div className="stat-card"><div className="stat-top"><span>{label}</span><i className={`stat-icon ${tone}`}>{icon}</i></div><strong>{value}</strong><small>{change}</small></div>; }
 function Quick({icon,title,desc,onClick}:{icon:React.ReactNode;title:string;desc:string;onClick:()=>void}) { return <button className="quick-action" onClick={onClick}><span className="quick-icon">{icon}</span><span><b>{title}</b><small>{desc}</small></span><span className="arrow">→</span></button>; }
