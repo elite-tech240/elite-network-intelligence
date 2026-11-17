@@ -22,7 +22,7 @@ Source: "..\build\EliteNetworkAgentService.exe"; DestDir: "{app}"; Flags: ignore
 Source: "..\EliteNetworkAgentService.xml"; DestDir: "{app}"; Flags: ignoreversion
 
 [Dirs]
-Name: "{commonappdata}\EliteNetworkIntelligence\Agent"; Permissions: users-modify
+Name: "{commonappdata}\EliteNetworkIntelligence\Agent"; Permissions: system-full admins-full
 
 [Code]
 function InitializeSetup(): Boolean;
@@ -48,7 +48,7 @@ begin
   begin
     SourceConfig := ExpandConstant('{src}\agent-config.json');
     TargetConfig := ExpandConstant('{commonappdata}\EliteNetworkIntelligence\Agent\agent-config.json');
-    if not FileCopy(SourceConfig, TargetConfig, False) then
+    if not FileCopy(SourceConfig, TargetConfig, True) then
       RaiseException('Could not install agent configuration.');
     Exec(ExpandConstant('{app}\EliteNetworkAgentService.exe'), 'install', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
     if ResultCode <> 0 then RaiseException('Could not register the monitoring service.');
