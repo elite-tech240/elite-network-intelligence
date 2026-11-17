@@ -1,5 +1,10 @@
 # Elite Network Intelligence Agent
 
+## Windows installer
+
+A Windows x64 setup executable is built by GitHub Actions. From the authenticated dashboard, generate a fresh enrollment configuration for each endpoint, download `EliteNetworkAgent-Setup.exe` and `agent-config.json`, keep both files in the same folder, then run the installer as Administrator. The installer registers the agent as an automatic Windows service. The setup executable is reusable; the one-time JSON configuration is **not** reusable and must be generated separately for every device. See [INSTALLER.md](INSTALLER.md) for build and troubleshooting details.
+
+
 The endpoint agent reports host inventory and periodic CPU, memory, disk, and cumulative network-interface counters. It can also poll configured routers and switches using read-only SNMPv2c. It does not run remote commands or make configuration changes on monitored equipment.
 
 ## Install
