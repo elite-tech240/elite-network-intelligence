@@ -151,7 +151,12 @@ Deno.serve(async (req: Request) => {
       }
     }
     const { data: commands } = await admin.from("pending_agent_commands").select("id,command").eq("device_id", deviceId).eq("status", "queued").order("created_at").limit(5);
-    if (commands?.length) await admin.from("pending_agent_commands").update({ status: "delivered", delivered_at: now }).in("id", commands.map((c) => c.id)).eq("status", "queued");
+    if (commands?.length) {
+      await admin.from("pending_agent_commands").update({ status: "delivered", delivered_at: now }).in("id", commands.map((c) => c.id)).eq("status", "queued");
+      if (commands.some((command) => command.command === "uninstall")) {
+        await admin.from("device_credentials").update({ revoked_at: now }).eq("device_id", deviceId).is("revoked_at", null);
+      }
+    }
     return json({ ok: true, device_id: deviceId, recorded_at: now, commands: commands || [] });
   }
 
