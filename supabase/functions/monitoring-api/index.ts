@@ -160,6 +160,52 @@ Deno.serve(async (req: Request) => {
     return json({ ok: true, device_id: deviceId, recorded_at: now, commands: commands || [] });
   }
 
+  const interfacesMatch = path.match(/^\/agents\/([0-9a-f-]+)\/interfaces\/report$/i);
+  if (req.method === "POST" && interfacesMatch) {
+    const agentId = interfacesMatch[1];
+    const auth = req.headers.get("Authorization") || "";
+    if (!auth.toLowerCase().startsWith("bearer ")) return fail("Bearer agent token required", 401);
+    const { data: credential } = await admin.from("device_credentials").select("device_id,revoked_at")
+      .eq("device_id", agentId).eq("token_hash", await hashToken(auth.slice(7).trim())).maybeSingle();
+    if (!credential || credential.revoked_at) return fail("Invalid or revoked agent credential", 401);
+    const { data: device } = await admin.from("devices").select("organization_id").eq("id", agentId).maybeSingle();
+    if (!device) return fail("Agent not found", 404);
+    const body = await req.json();
+    if (!Array.isArray(body.interfaces) || body.interfaces.length > 64) return fail("A maximum of 64 interfaces is accepted");
+    const counter = (value: unknown) => /^\d{1,19}$/.test(String(value ?? "")) ? String(value) : null;
+    let accepted = 0;
+    for (const item of body.interfaces) {
+      if (!item || typeof item !== "object") continue;
+      const name = String(item.name || "").trim().slice(0, 128);
+      if (!name) continue;
+      const macRaw = String(item.mac || "");
+      const mac = /^(?:[0-9a-f]{2}[:-]){5}[0-9a-f]{2}$/i.test(macRaw) ? macRaw.replaceAll("-", ":").toLowerCase() : null;
+      const speedMbps = Number(item.speed_mbps);
+      const mtu = Number(item.mtu);
+      const isUp = item.is_up === true ? "up" : item.is_up === false ? "down" : "unknown";
+      const { data: iface, error: interfaceError } = await admin.from("device_interfaces").upsert({
+        organization_id: device.organization_id, device_id: agentId, name,
+        interface_index: accepted + 1, description: null, mac_address: mac,
+        admin_status: "unknown", oper_status: isUp,
+        speed_bps: Number.isFinite(speedMbps) && speedMbps > 0 && speedMbps <= 1000000000 ? Math.round(speedMbps * 1000000) : null,
+        mtu: Number.isInteger(mtu) && mtu >= 576 && mtu <= 9216 ? mtu : null,
+        is_physical: !/^(lo|loopback|utun|tun|tap|docker|veth|br-)/i.test(name),
+        last_seen_at: new Date().toISOString(), updated_at: new Date().toISOString(),
+      }, { onConflict: "device_id,name" }).select("id").single();
+      if (interfaceError || !iface) return fail("Could not save interface inventory", 500);
+      const { error: metricError } = await admin.from("interface_metrics").insert({
+        organization_id: device.organization_id, interface_id: iface.id,
+        in_octets: counter(item.in_octets), out_octets: counter(item.out_octets),
+        in_errors: counter(item.in_errors), out_errors: counter(item.out_errors),
+        in_discards: counter(item.in_discards), out_discards: counter(item.out_discards),
+        recorded_at: new Date().toISOString(),
+      });
+      if (metricError) return fail("Could not save interface counters", 500);
+      accepted += 1;
+    }
+    return json({ ok: true, device_id: agentId, accepted, recorded_at: new Date().toISOString() });
+  }
+
   const snmpMatch = path.match(/^\/agents\/([0-9a-f-]+)\/snmp\/report$/i);
   if (req.method === "POST" && snmpMatch) {
     const agentId = snmpMatch[1];
