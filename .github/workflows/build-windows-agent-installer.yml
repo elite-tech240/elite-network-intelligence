@@ -41,8 +41,24 @@ jobs:
       - name: Compile agent modules
         run: python -m compileall -q agent
 
+  frontend-build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm install
+      - name: Build dashboard
+        working-directory: frontend
+        run: npm run build
+
   build-windows-installer:
-    needs: cross-platform-smoke
+    needs: [cross-platform-smoke, frontend-build]
     runs-on: windows-latest
     steps:
       - name: Checkout
