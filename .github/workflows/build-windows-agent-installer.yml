@@ -112,8 +112,8 @@ jobs:
       - name: Publish installer release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: agent-installer-v0.3.0
-          name: Elite Network Agent Installer v0.3.0
+          tag_name: agent-installer-v0.3.1
+          name: Elite Network Agent Installer v0.3.1
           body: Branded Windows x64 single-file installer. Enter a unique one-time enrollment token and site ID in the setup wizard for each computer.
           files: release-assets/EliteNetworkAgent-Setup.exe
           overwrite_files: true
