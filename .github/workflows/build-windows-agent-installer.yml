@@ -66,9 +66,9 @@ jobs:
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: agent-installer-v0.2.0
-          name: Elite Network Agent Installer v0.2.0
-          body: Windows x64 single-file installer. Enter a unique one-time enrollment token and site ID in the setup wizard for each computer.
+          tag_name: agent-installer-v0.3.0
+          name: Elite Network Agent Installer v0.3.0
+          body: Windows x64 single-file installer with Elite Network Intelligence branding. Enter a unique one-time enrollment token and site ID in the setup wizard for each computer.
           files: agent/dist/EliteNetworkAgent-Setup.exe
           overwrite_files: true
           make_latest: false
