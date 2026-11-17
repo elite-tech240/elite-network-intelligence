@@ -28,12 +28,12 @@ def collect_host_metrics() -> dict[str, Any]:
             "is_up": bool(info.isup) if info else None,
             "speed_mbps": int(info.speed) if info and info.speed else None,
             "mtu": int(info.mtu) if info and info.mtu else None,
-            "in_octets": int(io.bytes_recv) if io else None,
-            "out_octets": int(io.bytes_sent) if io else None,
-            "in_errors": int(io.errin) if io else None,
-            "out_errors": int(io.errout) if io else None,
-            "in_discards": int(io.dropin) if io else None,
-            "out_discards": int(io.dropout) if io else None})
+            "in_octets": str(io.bytes_recv) if io else None,
+            "out_octets": str(io.bytes_sent) if io else None,
+            "in_errors": str(io.errin) if io else None,
+            "out_errors": str(io.errout) if io else None,
+            "in_discards": str(io.dropin) if io else None,
+            "out_discards": str(io.dropout) if io else None})
     try:
         disk_percent = psutil.disk_usage(_system_volume()).percent
     except (OSError, PermissionError):
