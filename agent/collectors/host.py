@@ -14,10 +14,12 @@ def _system_volume() -> str:
 def collect_host_metrics() -> dict[str, Any]:
     """Return normalized host metrics and interface inventory without changing state."""
     counters = psutil.net_io_counters() or None
+    pernic = psutil.net_io_counters(pernic=True) or {}
     interfaces: list[dict[str, Any]] = []
     addresses = psutil.net_if_addrs()
     stats = psutil.net_if_stats()
     for name, entries in addresses.items():
+        io = pernic.get(name)
         info = stats.get(name)
         ipv4 = [entry.address for entry in entries if getattr(entry.family, "name", "") == "AF_INET"]
         ipv6 = [entry.address.split("%", 1)[0] for entry in entries if getattr(entry.family, "name", "") == "AF_INET6"]
@@ -25,7 +27,13 @@ def collect_host_metrics() -> dict[str, Any]:
         interfaces.append({"name": name[:128], "ipv4": ipv4[:8], "ipv6": ipv6[:8], "mac": mac,
             "is_up": bool(info.isup) if info else None,
             "speed_mbps": int(info.speed) if info and info.speed else None,
-            "mtu": int(info.mtu) if info and info.mtu else None})
+            "mtu": int(info.mtu) if info and info.mtu else None,
+            "in_octets": int(io.bytes_recv) if io else None,
+            "out_octets": int(io.bytes_sent) if io else None,
+            "in_errors": int(io.errin) if io else None,
+            "out_errors": int(io.errout) if io else None,
+            "in_discards": int(io.dropin) if io else None,
+            "out_discards": int(io.dropout) if io else None})
     try:
         disk_percent = psutil.disk_usage(_system_volume()).percent
     except (OSError, PermissionError):
