@@ -4,8 +4,21 @@ import os
 import platform
 import socket
 import subprocess
+import sys
 import time
 from pathlib import Path
+
+# Load installer-generated configuration before reading environment settings.
+_config_dir = Path(sys.executable).resolve().parent if getattr(sys, "frozen", False) else Path(__file__).resolve().parent
+_config_file = _config_dir / "agent-config.json"
+if _config_file.exists():
+    try:
+        _config = json.loads(_config_file.read_text(encoding="utf-8"))
+        for _key, _value in _config.items():
+            if _value is not None:
+                os.environ.setdefault(str(_key), str(_value))
+    except (OSError, ValueError) as exc:
+        raise SystemExit(f"Could not read agent-config.json: {exc}")
 
 import psutil
 import requests
