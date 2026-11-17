@@ -1,17 +1,29 @@
 # Elite Network Intelligence
 
-**Version:** 0.2.0  
-**Status:** Early MVP foundation — not production-ready.
+**Version:** 0.4.0  
+**Status:** Monitoring MVP — endpoint telemetry and alerting are implemented; router/SNMP and flow analytics remain in progress.
 
-Elite is a multi-tenant foundation for discovering and monitoring network assets. The repository contains a React/Vite dashboard, a FastAPI service, a lightweight Python agent skeleton, and Supabase migrations.
+Elite is a multi-tenant network monitoring application with a React/Vite dashboard, Supabase Auth/Postgres, a Supabase Edge Function API, an optional FastAPI service, and a Python endpoint agent.
 
 ## Repository layout
 
 - `frontend/` — React + TypeScript + Vite dashboard.
-- `backend/` — FastAPI API with tenant-scoped enrollment and device endpoints.
-- `agent/` — starter agent that reports host metadata to the API.
-- `supabase/migrations/` — PostgreSQL schema and tenant integrity constraints.
-- `docs/` — architecture and deployment notes.
+- `backend/` — optional FastAPI API for local development or separate hosting.
+- `agent/` — Windows/Linux endpoint inventory and telemetry agent.
+- `supabase/functions/monitoring-api/` — production API for one-time enrollment, device heartbeat, and team invitations.
+- `supabase/migrations/` — tenant schema, RLS, device credentials, telemetry, alerts, and SNMP target storage.
+- `docs/` — deployment and operating notes.
+
+## What works
+
+- Email/password sign-in and password reset; no public self-signup.
+- Workspace-scoped roles: owner, admin, operator, viewer.
+- Site and CIDR network creation.
+- Owner/admin email invitations (requires working Supabase Auth email delivery).
+- Short-lived one-time agent enrollment tokens; raw tokens are not stored.
+- Unique device credentials; only token hashes are stored in the database.
+- Agent heartbeat with CPU, memory, disk, and cumulative network-interface byte counters.
+- Device health history, threshold rules, alert events, and acknowledgement.
 
 ## Quick start
 
@@ -19,43 +31,28 @@ Elite is a multi-tenant foundation for discovering and monitoring network assets
 
 ```bash
 cd frontend
-cp .env.example .env
 npm install
 npm run dev
 ```
 
-Set `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY` in `frontend/.env`. The dashboard renders a clear setup state until Supabase is configured.
+Set `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`, and `VITE_API_URL` in the frontend environment. Production API URL:
 
-### Backend
-
-```bash
-cd backend
-python -m venv .venv
-source .venv/bin/activate  # Windows: .venv\\Scripts\\activate
-pip install -r requirements.txt
-uvicorn app.main:app --reload
+```
+https://pkaihrushsdxebfoyiis.supabase.co/functions/v1/monitoring-api
 ```
 
-Configure `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` only on the server. Never expose the service-role key in frontend variables.
+### Database and API
 
-### Database
-
-Apply the SQL files in `supabase/migrations/` to the Supabase project in filename order. Review policies and adapt them to your authentication model before production use.
+Apply `supabase/migrations/` in filename order. Deploy `supabase/functions/monitoring-api/index.ts` as the `monitoring-api` Edge Function with JWT verification disabled; it performs explicit user JWT verification on protected routes. Supabase service credentials stay server-side.
 
 ### Agent
 
-```bash
-cd agent
-pip install -r requirements.txt
-ELITE_API_URL=http://127.0.0.1:8000 ELITE_ENROLLMENT_TOKEN=... python agent.py
-```
+See `agent/README.md` for Windows PowerShell and Linux install instructions. Generate an enrollment token from **Sites & Networks → Enroll a monitoring agent**.
 
-## Current scope and limitations
+## Important limitations
 
-Implemented foundation: tenant and site schema, tenant integrity constraints, API health endpoint, authenticated enrollment-token validation, device heartbeat ingestion, and a basic dashboard shell.
-
-Still requires implementation and security review: production identity/RBAC, token rotation and revocation UI, durable agent queue, SNMP/WMI/SSH collectors, topology mapping, historical traffic charts, service/process inventory, log/event ingestion, alert rules, reporting, and approved remote actions. The included agent reports basic host metadata only. Do not expose this service publicly or use it for operational control without a security review.
+The current agent monitors the endpoint where it runs. Its network byte counters are cumulative host interface counters, not packet-flow inspection or router/switch bandwidth. SNMP polling, router/switch discovery, topology mapping, offline-detection schedules, audit logs, rate limiting, credential revocation UI, and formal security review are not yet implemented. Do not use this MVP for remote administration or security response actions.
 
 ## Deployment
 
-See `docs/deployment.md`. Vercel can host the static frontend. Host the FastAPI service on a Python-capable runtime (or adapt it to a supported Vercel Python function); configure the API URL separately. Supabase stores application data.
+See `docs/deployment.md`. Vercel hosts the frontend; Supabase hosts Auth, Postgres, and the production Edge Function API.
