@@ -71,6 +71,15 @@ def enroll():
         STATE_FILE.chmod(0o600)
     except OSError:
         pass
+    # The one-time token is no longer needed after successful enrollment.
+    for config_path in _config_candidates:
+        if config_path.exists():
+            try:
+                installed_config = json.loads(config_path.read_text(encoding="utf-8"))
+                installed_config.pop("ELITE_ENROLLMENT_TOKEN", None)
+                config_path.write_text(json.dumps(installed_config, indent=2), encoding="utf-8")
+            except (OSError, ValueError):
+                pass
     print("Enrolled endpoint:", result["device"].get("hostname", socket.gethostname()))
     return state
 
