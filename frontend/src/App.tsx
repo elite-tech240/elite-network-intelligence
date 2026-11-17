@@ -9,6 +9,7 @@ type Membership = { organization_id: string; role: 'owner' | 'admin' | 'operator
 const url = import.meta.env.VITE_SUPABASE_URL as string | undefined;
 const key = import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined;
 const configured = Boolean(url && key && !url.includes('YOUR_PROJECT') && !key.includes('YOUR_'));
+const apiUrl = (import.meta.env.VITE_API_URL as string | undefined)?.replace(/\/$/, '') ?? '';
 const supabase: SupabaseClient | null = configured ? createClient(url!, key!) : null;
 const nav = [
   { label: 'Overview', icon: LayoutDashboard, path: '/' }, { label: 'Devices', icon: Boxes, path: '/devices' },
@@ -98,11 +99,11 @@ export default function App() {
           {dataError && <div className="error-banner">Could not load workspace data: {dataError}</div>}
           {dataLoading && <div className="loading-line">Loading workspace data…</div>}
           {page === 'Overview' && <Overview devices={devices} sites={sites} networks={networks} online={online} loading={dataLoading} go={go}/>}
-          {page === 'Devices' && <DevicesPage devices={devices} loading={dataLoading}/>}
+          {page === 'Devices' && <DevicesPage devices={devices} loading={dataLoading} organizationId={membership.organization_id}/ >}
           {page === 'Topology' && <TopologyPage sites={sites} networks={networks} devices={devices}/>}
-          {page === 'Traffic' && <TrafficPage/>}
-          {page === 'Alerts' && <AlertsPage/>}
-          {page === 'Sites & Networks' && <SitesPage sites={sites} networks={networks} organizationId={membership.organization_id} role={membership.role} onRefresh={refresh}/>}
+          {page === 'Traffic' && <TrafficPage organizationId={membership.organization_id}/ >}
+          {page === 'Alerts' && <AlertsPage organizationId={membership.organization_id} role={membership.role}/ >}
+          {page === 'Sites & Networks' && <SitesPage sites={sites} networks={networks} organizationId={membership.organization_id} role={membership.role} accessToken={session.access_token} onRefresh={refresh}/>}
           {page === 'Settings' && <SettingsPage user={session.user} membership={membership} onSignOut={signOut}/>}
         </>}
         <div className="footer"><span>ELITE NETWORK INTELLIGENCE <b>v0.3.0</b></span><span>Secure workspace · {membership?.role ?? 'No role'}</span></div>
