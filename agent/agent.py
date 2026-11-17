@@ -10,15 +10,20 @@ from pathlib import Path
 
 # Load installer-generated configuration before reading environment settings.
 _config_dir = Path(sys.executable).resolve().parent if getattr(sys, "frozen", False) else Path(__file__).resolve().parent
-_config_file = _config_dir / "agent-config.json"
-if _config_file.exists():
-    try:
-        _config = json.loads(_config_file.read_text(encoding="utf-8"))
-        for _key, _value in _config.items():
-            if _value is not None:
-                os.environ.setdefault(str(_key), str(_value))
-    except (OSError, ValueError) as exc:
-        raise SystemExit(f"Could not read agent-config.json: {exc}")
+_config_candidates = [
+    _config_dir / "agent-config.json",
+    Path(os.environ.get("PROGRAMDATA", r"C:\ProgramData")) / "EliteNetworkIntelligence" / "Agent" / "agent-config.json",
+]
+for _config_file in _config_candidates:
+    if _config_file.exists():
+        try:
+            _config = json.loads(_config_file.read_text(encoding="utf-8"))
+            for _key, _value in _config.items():
+                if _value is not None:
+                    os.environ.setdefault(str(_key), str(_value))
+            break
+        except (OSError, ValueError) as exc:
+            raise SystemExit(f"Could not read {_config_file}: {exc}")
 
 import psutil
 import requests
