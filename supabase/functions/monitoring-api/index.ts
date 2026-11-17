@@ -149,6 +149,51 @@ Deno.serve(async (req: Request) => {
     return json({ ok: true, device_id: deviceId, recorded_at: now });
   }
 
+  const snmpMatch = path.match(/^\/agents\/([0-9a-f-]+)\/snmp\/report$/i);
+  if (req.method === "POST" && snmpMatch) {
+    const agentId = snmpMatch[1];
+    const auth = req.headers.get("Authorization") || "";
+    if (!auth.toLowerCase().startsWith("bearer ")) return fail("Bearer agent token required", 401);
+    const { data: credential } = await admin.from("device_credentials").select("device_id,revoked_at")
+      .eq("device_id", agentId).eq("token_hash", await hashToken(auth.slice(7).trim())).maybeSingle();
+    if (!credential || credential.revoked_at) return fail("Invalid or revoked agent credential", 401);
+    const { data: agentDevice } = await admin.from("devices").select("organization_id,site_id").eq("id", agentId).maybeSingle();
+    if (!agentDevice) return fail("Agent not found", 404);
+    const body = await req.json();
+    const ip = String(body.ip_address || "");
+    if (!ip || ip.length > 64) return fail("A valid SNMP target IP is required");
+    const type = body.device_type === "switch" ? "switch" : "router";
+    const now = new Date().toISOString();
+    const { data: existing } = await admin.from("devices").select("id")
+      .eq("organization_id", agentDevice.organization_id).eq("site_id", agentDevice.site_id)
+      .eq("ip_address", ip).limit(1).maybeSingle();
+    let targetDevice = existing;
+    if (targetDevice) {
+      await admin.from("devices").update({
+        hostname: String(body.hostname || ip).slice(0, 255), device_type: type,
+        os_name: body.sys_descr ? String(body.sys_descr).slice(0, 120) : null,
+        status: "online", last_seen_at: now,
+      }).eq("id", targetDevice.id);
+    } else {
+      const { data: created, error } = await admin.from("devices").insert({
+        organization_id: agentDevice.organization_id, site_id: agentDevice.site_id,
+        hostname: String(body.hostname || ip).slice(0, 255), device_type: type,
+        os_name: body.sys_descr ? String(body.sys_descr).slice(0, 120) : null,
+        ip_address: ip, status: "online", last_seen_at: now,
+      }).select("id").single();
+      if (error || !created) return fail("Could not register SNMP device", 500);
+      targetDevice = created;
+    }
+    const { error: metricError } = await admin.from("device_metrics").insert({
+      organization_id: agentDevice.organization_id, device_id: targetDevice.id,
+      bytes_recv: body.bytes_recv == null ? null : Number(body.bytes_recv),
+      bytes_sent: body.bytes_sent == null ? null : Number(body.bytes_sent),
+      recorded_at: now,
+    });
+    if (metricError) return fail("Could not save SNMP counters", 500);
+    return json({ ok: true, device_id: targetDevice.id, ip_address: ip, recorded_at: now });
+  }
+
   const revokeMatch = path.match(/^\/devices\/([0-9a-f-]+)\/revoke$/i);
   if (req.method === "POST" && revokeMatch) {
     const user = await signedInUser(req);
