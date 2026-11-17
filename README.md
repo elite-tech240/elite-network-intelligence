@@ -51,7 +51,7 @@ See `agent/README.md` for Windows PowerShell and Linux install instructions. Gen
 
 ## Important limitations
 
-The current agent monitors the endpoint where it runs. Its network byte counters are cumulative host interface counters, not packet-flow inspection or router/switch bandwidth. SNMP polling, router/switch discovery, topology mapping, offline-detection schedules, audit logs, rate limiting, credential revocation UI, and formal security review are not yet implemented. Do not use this MVP for remote administration or security response actions.
+The current agent monitors the endpoint where it runs. Its network byte counters are cumulative host interface counters, not packet-flow inspection or router/switch bandwidth. SNMPv2c read-only polling is available through the endpoint agent, but SNMPv3, active network discovery, topology mapping, offline-alert schedules, audit logs, rate limiting, and formal security review are not yet implemented. Do not use this MVP for remote administration or security response actions.
 
 ## Deployment
 
