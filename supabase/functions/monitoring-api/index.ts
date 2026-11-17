@@ -76,6 +76,10 @@ Deno.serve(async (req: Request) => {
     if (!enrollment) return fail("Invalid enrollment token", 401);
     if (enrollment.revoked_at || (enrollment.expires_at && new Date(enrollment.expires_at).getTime() <= Date.now())) return fail("Enrollment token expired or revoked", 401);
     if (enrollment.site_id !== siteId) return fail("Token is not authorized for this site", 403);
+    const consumedAt = new Date().toISOString();
+    const { data: consumed } = await admin.from("enrollment_tokens").update({ revoked_at: consumedAt })
+      .eq("id", enrollment.id).is("revoked_at", null).gt("expires_at", consumedAt).select("id").maybeSingle();
+    if (!consumed) return fail("Enrollment token has already been used, expired, or revoked", 401);
     const deviceToken = randomToken(48);
     const { data: device, error: deviceError } = await admin.from("devices").insert({
       organization_id: enrollment.organization_id, site_id: siteId, hostname: hostname.slice(0, 255),
@@ -143,6 +147,22 @@ Deno.serve(async (req: Request) => {
       }
     }
     return json({ ok: true, device_id: deviceId, recorded_at: now });
+  }
+
+  const revokeMatch = path.match(/^\/devices\/([0-9a-f-]+)\/revoke$/i);
+  if (req.method === "POST" && revokeMatch) {
+    const user = await signedInUser(req);
+    if (!user) return fail("Valid user session required", 401);
+    const deviceId = revokeMatch[1];
+    const { data: device } = await admin.from("devices").select("id,organization_id").eq("id", deviceId).maybeSingle();
+    if (!device) return fail("Device not found", 404);
+    const member = await membership(user.id, device.organization_id);
+    if (!member || !["owner", "admin"].includes(member.role)) return fail("Only owners and admins can revoke device credentials", 403);
+    const now = new Date().toISOString();
+    const { error } = await admin.from("device_credentials").update({ revoked_at: now }).eq("device_id", deviceId);
+    if (error) return fail("Could not revoke device credential", 500);
+    await admin.from("devices").update({ status: "offline" }).eq("id", deviceId);
+    return json({ ok: true, device_id: deviceId, revoked_at: now });
   }
 
   if (req.method === "POST" && path === "/team/invite") {
