@@ -8,7 +8,7 @@ import psutil
 def _system_volume() -> str:
     if platform.system() == "Windows":
         drive = os.environ.get("SystemDrive", "C:")
-        return drive.rstrip("\\\\") + "\\\\"
+        return drive.rstrip("\\") + "\\"
     return "/"
 
 def collect_host_metrics() -> dict[str, Any]:
