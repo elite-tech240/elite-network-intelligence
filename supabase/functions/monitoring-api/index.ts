@@ -150,7 +150,9 @@ Deno.serve(async (req: Request) => {
         });
       }
     }
-    return json({ ok: true, device_id: deviceId, recorded_at: now });
+    const { data: commands } = await admin.from("pending_agent_commands").select("id,command").eq("device_id", deviceId).eq("status", "queued").order("created_at").limit(5);
+    if (commands?.length) await admin.from("pending_agent_commands").update({ status: "delivered", delivered_at: now }).in("id", commands.map((c) => c.id)).eq("status", "queued");
+    return json({ ok: true, device_id: deviceId, recorded_at: now, commands: commands || [] });
   }
 
   const snmpMatch = path.match(/^\/agents\/([0-9a-f-]+)\/snmp\/report$/i);
@@ -196,6 +198,40 @@ Deno.serve(async (req: Request) => {
     });
     if (metricError) return fail("Could not save SNMP counters", 500);
     return json({ ok: true, device_id: targetDevice.id, ip_address: ip, recorded_at: now });
+  }
+
+
+  const deviceActionMatch = path.match(/^\/devices\/([0-9a-f-]+)\/(archive|restore|uninstall)$/i);
+  if (req.method === "POST" && deviceActionMatch) {
+    const user = await signedInUser(req);
+    if (!user) return fail("Valid user session required", 401);
+    const deviceId = deviceActionMatch[1], action = deviceActionMatch[2].toLowerCase();
+    const { data: device } = await admin.from("devices").select("id,organization_id,last_seen_at,archived_at,device_type").eq("id", deviceId).maybeSingle();
+    if (!device) return fail("Device not found", 404);
+    const member = await membership(user.id, device.organization_id);
+    if (!member || !["owner", "admin"].includes(member.role)) return fail("Only owners and admins can manage devices", 403);
+    const online = Boolean(device.last_seen_at && Date.now() - new Date(device.last_seen_at).getTime() <= 120000);
+    if (action === "archive") {
+      if (device.archived_at) return fail("Device is already archived", 409);
+      if (online) return fail("Only offline devices can be archived", 409);
+      const { error } = await admin.from("devices").update({ archived_at: new Date().toISOString() }).eq("id", deviceId);
+      if (error) return fail("Could not archive device", 500);
+      return json({ ok: true, archived: true, device_id: deviceId });
+    }
+    if (action === "restore") {
+      if (!device.archived_at) return fail("Device is not archived", 409);
+      const { error } = await admin.from("devices").update({ archived_at: null }).eq("id", deviceId);
+      if (error) return fail("Could not restore device", 500);
+      return json({ ok: true, archived: false, device_id: deviceId });
+    }
+    if (device.archived_at) return fail("Restore the device before uninstalling its agent", 409);
+    if (!online) return fail("Remote uninstall requires an online device", 409);
+    if (!["workstation", "server"].includes(device.device_type)) return fail("Remote uninstall is only supported for enrolled endpoint agents", 400);
+    const { data: pending } = await admin.from("pending_agent_commands").select("id").eq("device_id", deviceId).eq("command", "uninstall").in("status", ["queued", "delivered"]).limit(1);
+    if (pending?.length) return fail("An uninstall command is already pending", 409);
+    const { error } = await admin.from("pending_agent_commands").insert({ device_id: deviceId, command: "uninstall", requested_by: user.id });
+    if (error) return fail("Could not queue uninstall command", 500);
+    return json({ ok: true, device_id: deviceId, command: "uninstall", status: "queued" }, 202);
   }
 
   const revokeMatch = path.match(/^\/devices\/([0-9a-f-]+)\/revoke$/i);
