@@ -134,9 +134,13 @@ Deno.serve(async (req: Request) => {
       const value = metrics[rule.metric as "cpu_percent" | "memory_percent" | "disk_percent"];
       if (value == null || rule.threshold == null) continue;
       const breached = rule.operator === "gte" ? value >= rule.threshold : value > rule.threshold;
-      if (!breached) continue;
+      if (!breached) {
+        await admin.from("alert_events").update({ status: "resolved", resolved_at: now }).eq("device_id", deviceId)
+          .eq("rule_id", rule.id).in("status", ["open", "acknowledged"]);
+        continue;
+      }
       const { data: active } = await admin.from("alert_events").select("id").eq("device_id", deviceId)
-        .eq("rule_id", rule.id).eq("status", "open").limit(1);
+        .eq("rule_id", rule.id).in("status", ["open", "acknowledged"]).limit(1);
       if (!active?.length) {
         await admin.from("alert_events").insert({
           organization_id: device.organization_id, device_id: deviceId, rule_id: rule.id,
