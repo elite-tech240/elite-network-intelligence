@@ -131,6 +131,18 @@ def poll_snmp_target(state, target):
 
 
 
+def report_interfaces(state, interfaces):
+    """Send bounded, normalized interface inventory and counters to the trusted API."""
+    response = requests.post(
+        f"{API_URL}/agents/{state['device_id']}/interfaces/report",
+        json={"interfaces": interfaces[:64]},
+        headers={"Authorization": f"Bearer {state['device_token']}"},
+        timeout=20,
+    )
+    response.raise_for_status()
+    return response.json()
+
+
 def schedule_windows_uninstall():
     """Launch the registered Inno Setup uninstaller after this service exits."""
     if os.name != "nt":
@@ -184,6 +196,11 @@ def main():
             response.raise_for_status()
             result = response.json()
             print("Endpoint telemetry accepted")
+            try:
+                interface_result = report_interfaces(state, snapshot.get("interfaces", []))
+                print("Interface telemetry accepted:", interface_result.get("accepted", 0))
+            except requests.RequestException as exc:
+                print("Interface telemetry delivery failed:", exc)
             if any(c.get("command") == "uninstall" for c in result.get("commands", [])):
                 if schedule_windows_uninstall():
                     return
