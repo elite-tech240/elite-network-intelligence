@@ -42,9 +42,8 @@ jobs:
           Invoke-WebRequest -Uri https://github.com/winsw/winsw/releases/download/v2.12.0/WinSW-x64.exe -OutFile agent/build/EliteNetworkAgentService.exe
 
       - name: Install Inno Setup
-        uses: crazy-max/ghaction-chocolatey@v3
-        with:
-          args: install innosetup --no-progress
+        shell: pwsh
+        run: choco install innosetup --yes --no-progress
 
       - name: Compile installer
         shell: pwsh
