@@ -1,5 +1,5 @@
 import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
-import { Activity, Bell, Boxes, Cable, ChevronDown, CircleHelp, Gauge, LayoutDashboard, LogOut, Network, Search, Settings, ShieldCheck, Wifi, Zap, LockKeyhole, Eye, EyeOff, RefreshCw, MapPin, Server, ArrowUpRight, Clock3, UserRound, KeyRound } from 'lucide-react';
+import { Activity, Bell, Boxes, Cable, ChevronDown, CircleHelp, LayoutDashboard, LogOut, Network, Search, Settings, ShieldCheck, Wifi, Zap, LockKeyhole, Eye, EyeOff, RefreshCw, MapPin, Server, ArrowUpRight, UserRound, KeyRound } from 'lucide-react';
 import { createClient, type Session, type SupabaseClient, type User } from '@supabase/supabase-js';
 
 type Device = { id: string; hostname: string; ip_address: string | null; status: string; device_type: string | null; last_seen_at: string | null; site_id?: string };
