@@ -211,7 +211,7 @@ Deno.serve(async (req: Request) => {
     const user = await signedInUser(req);
     if (!user) return fail("Valid user session required", 401);
     const deviceId = deviceActionMatch[1], action = deviceActionMatch[2].toLowerCase();
-    const { data: device } = await admin.from("devices").select("id,organization_id,last_seen_at,archived_at,device_type").eq("id", deviceId).maybeSingle();
+    const { data: device } = await admin.from("devices").select("id,organization_id,last_seen_at,archived_at,device_type,os_name").eq("id", deviceId).maybeSingle();
     if (!device) return fail("Device not found", 404);
     const member = await membership(user.id, device.organization_id);
     if (!member || !["owner", "admin"].includes(member.role)) return fail("Only owners and admins can manage devices", 403);
@@ -231,7 +231,7 @@ Deno.serve(async (req: Request) => {
     }
     if (device.archived_at) return fail("Restore the device before uninstalling its agent", 409);
     if (!online) return fail("Remote uninstall requires an online device", 409);
-    if (device.device_type !== "workstation") return fail("Remote uninstall is only supported for Windows workstations", 400);
+    if (device.device_type !== "workstation" || device.os_name !== "Windows") return fail("Remote uninstall is only supported for Windows workstations", 400);
     const { data: pending } = await admin.from("pending_agent_commands").select("id").eq("device_id", deviceId).eq("command", "uninstall").in("status", ["queued", "delivered"]).limit(1);
     if (pending?.length) return fail("An uninstall command is already pending", 409);
     const { error } = await admin.from("pending_agent_commands").insert({ device_id: deviceId, command: "uninstall", requested_by: user.id });
