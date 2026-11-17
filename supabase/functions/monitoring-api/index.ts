@@ -124,7 +124,7 @@ Deno.serve(async (req: Request) => {
     };
     const [{ error: metricError }, { error: deviceError }, { error: credentialUpdateError }] = await Promise.all([
       admin.from("device_metrics").insert(metrics),
-      admin.from("devices").update({ status: body.status === "degraded" ? "degraded" : "online", last_seen_at: now }).eq("id", deviceId),
+      admin.from("devices").update({ status: body.status === "degraded" ? "degraded" : "online", last_seen_at: now, archived_at: null }).eq("id", deviceId),
       admin.from("device_credentials").update({ last_used_at: now }).eq("device_id", deviceId),
     ]);
     if (metricError || deviceError || credentialUpdateError) return fail("Could not persist device telemetry", 500);
@@ -226,7 +226,7 @@ Deno.serve(async (req: Request) => {
     }
     if (device.archived_at) return fail("Restore the device before uninstalling its agent", 409);
     if (!online) return fail("Remote uninstall requires an online device", 409);
-    if (!["workstation", "server"].includes(device.device_type)) return fail("Remote uninstall is only supported for enrolled endpoint agents", 400);
+    if (device.device_type !== "workstation") return fail("Remote uninstall is only supported for Windows workstations", 400);
     const { data: pending } = await admin.from("pending_agent_commands").select("id").eq("device_id", deviceId).eq("command", "uninstall").in("status", ["queued", "delivered"]).limit(1);
     if (pending?.length) return fail("An uninstall command is already pending", 409);
     const { error } = await admin.from("pending_agent_commands").insert({ device_id: deviceId, command: "uninstall", requested_by: user.id });

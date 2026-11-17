@@ -137,7 +137,7 @@ def schedule_windows_uninstall():
         print("Installed uninstaller was not found.")
         return False
     script = Path(os.environ.get("TEMP", str(Path.home()))) / "elite-agent-remove.ps1"
-    program_data = Path(os.environ.get("PROGRAMDATA", r"C:\\ProgramData")) / "EliteNetworkIntelligence" / "Agent"
+    program_data = Path(os.environ.get("PROGRAMDATA", r"C:\ProgramData")) / "EliteNetworkIntelligence" / "Agent"
     script.write_text(
         "$ErrorActionPreference = 'SilentlyContinue'\n"
         "Start-Sleep -Seconds 8\n"
