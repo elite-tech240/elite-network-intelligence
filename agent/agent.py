@@ -126,6 +126,32 @@ def poll_snmp_target(state, target):
         print("SNMP poll failed for", host, ":", str(exc))
 
 
+
+def schedule_windows_uninstall():
+    """Launch the registered Inno Setup uninstaller after this service exits."""
+    if os.name != "nt":
+        return False
+    install_dir = Path(sys.executable).resolve().parent
+    uninstaller = install_dir / "unins000.exe"
+    if not uninstaller.exists():
+        print("Installed uninstaller was not found.")
+        return False
+    script = Path(os.environ.get("TEMP", str(Path.home()))) / "elite-agent-remove.ps1"
+    program_data = Path(os.environ.get("PROGRAMDATA", r"C:\ProgramData")) / "EliteNetworkIntelligence" / "Agent"
+    script.write_text(
+        "$ErrorActionPreference = 'SilentlyContinue'\n"
+        "Start-Sleep -Seconds 8\n"
+        f"Start-Process -FilePath '{uninstaller}' -ArgumentList '/VERYSILENT /SUPPRESSMSGBOXES /NORESTART' -Wait\n"
+        f"Remove-Item -LiteralPath '{program_data}' -Recurse -Force\n"
+        f"Remove-Item -LiteralPath '{script}' -Force\n",
+        encoding="utf-8",
+    )
+    subprocess.Popen(["powershell.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-WindowStyle", "Hidden", "-File", str(script)],
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0), close_fds=True)
+    print("Remote uninstall scheduled.")
+    return True
+
+
 def main():
     if STATE_FILE.exists():
         state = json.loads(STATE_FILE.read_text(encoding="utf-8"))
@@ -154,7 +180,12 @@ def main():
             if response.status_code == 401:
                 raise SystemExit("Device credential was revoked. Remove local state and enroll again.")
             response.raise_for_status()
+            result = response.json()
             print("Endpoint telemetry accepted")
+            if any(c.get("command") == "uninstall" for c in result.get("commands", [])):
+                if schedule_windows_uninstall():
+                    return
+                raise SystemExit("Could not schedule remote uninstall.")
         except requests.RequestException as exc:
             print("Endpoint telemetry delivery failed:", exc)
 

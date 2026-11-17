@@ -6,6 +6,10 @@ on:
     paths:
       - 'agent/**'
       - '.github/workflows/build-windows-agent-installer.yml'
+  pull_request:
+    paths:
+      - 'agent/**'
+      - '.github/workflows/build-windows-agent-installer.yml'
   workflow_dispatch:
 
 permissions:
@@ -59,11 +63,12 @@ jobs:
           if-no-files-found: error
 
       - name: Publish installer release
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: agent-installer-v0.1.0
+          tag_name: agent-installer-v0.2.0
           name: Elite Network Agent Installer v0.1.0
-          body: Windows x64 installer. The dashboard creates a separate one-time enrollment configuration for each install package.
+          body: Windows x64 single-file installer. Enter a unique one-time enrollment token and site ID in the setup wizard for each computer.
           files: agent/dist/EliteNetworkAgent-Setup.exe
           overwrite_files: true
           make_latest: false
