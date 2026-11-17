@@ -89,12 +89,12 @@ export default function App() {
   const title = page === 'Overview' ? 'Network overview' : page;
 
   if (!configured) return <AuthScreen configured={false} email={email} setEmail={setEmail} password={password} setPassword={setPassword} showPassword={showPassword} setShowPassword={setShowPassword} busy={false} error="" notice="" resetMode={false} setResetMode={() => {}} onSubmit={e => e.preventDefault()} />;
-  if (!authReady) return <div className="auth-screen"><div className="auth-card"><div className="brand-mark auth-mark"><Network size={22}/></div><p className="auth-subtitle">Loading secure session…</p></div></div>;
+  if (!authReady) return <div className="auth-screen"><div className="auth-card"><div className="brand-mark auth-mark"><img src="/elite-network-mark.svg" alt="" /></div><p className="auth-subtitle">Loading secure session…</p></div></div>;
   if (!session) return <AuthScreen configured email={email} setEmail={setEmail} password={password} setPassword={setPassword} showPassword={showPassword} setShowPassword={setShowPassword} busy={busy} error={authError} notice={notice} resetMode={resetMode} setResetMode={setResetMode} onSubmit={resetMode ? sendReset : signIn} />;
 
   return <div className="shell">
     <aside className="sidebar">
-      <div className="brand"><div className="brand-mark"><Network size={21}/></div><div><b>ELITE</b><span>NETWORK INTELLIGENCE</span></div></div>
+      <div className="brand"><div className="brand-mark"><img src="/elite-network-mark.svg" alt="" /></div><div><b>ELITE</b><span>NETWORK INTELLIGENCE</span></div></div>
       <div className="workspace"><div className="workspace-icon">EN</div><div><b>{membership?.organizations?.[0]?.name ?? 'Workspace'}</b><small>{membership ? `${membership.role} access` : 'No organization access'}</small></div><ChevronDown size={15}/></div>
       <div className="nav-label">PLATFORM</div>
       <nav>{nav.map(item => <button key={item.label} className={page === item.label ? 'nav-item selected' : 'nav-item'} onClick={() => go(item.label)}><item.icon size={17}/>{item.label}{item.label === 'Alerts' && <i className="nav-dot"/>}</button>)}</nav>
