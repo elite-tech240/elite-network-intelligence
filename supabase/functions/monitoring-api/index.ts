@@ -119,8 +119,8 @@ Deno.serve(async (req: Request) => {
     const metrics = {
       organization_id: device.organization_id, device_id: deviceId,
       cpu_percent: numeric(body.cpu_percent), memory_percent: numeric(body.memory_percent),
-      disk_percent: numeric(body.disk_percent), bytes_sent: numeric(body.bytes_sent),
-      bytes_recv: numeric(body.bytes_recv), recorded_at: now,
+      disk_percent: numeric(body.disk_percent), bytes_sent: body.bytes_sent == null ? null : String(body.bytes_sent),
+      bytes_recv: body.bytes_recv == null ? null : String(body.bytes_recv), recorded_at: now,
     };
     const [{ error: metricError }, { error: deviceError }, { error: credentialUpdateError }] = await Promise.all([
       admin.from("device_metrics").insert(metrics),
@@ -186,8 +186,8 @@ Deno.serve(async (req: Request) => {
     }
     const { error: metricError } = await admin.from("device_metrics").insert({
       organization_id: agentDevice.organization_id, device_id: targetDevice.id,
-      bytes_recv: body.bytes_recv == null ? null : Number(body.bytes_recv),
-      bytes_sent: body.bytes_sent == null ? null : Number(body.bytes_sent),
+      bytes_recv: body.bytes_recv == null ? null : String(body.bytes_recv),
+      bytes_sent: body.bytes_sent == null ? null : String(body.bytes_sent),
       recorded_at: now,
     });
     if (metricError) return fail("Could not save SNMP counters", 500);
