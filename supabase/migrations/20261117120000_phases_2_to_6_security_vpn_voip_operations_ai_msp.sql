@@ -245,7 +245,7 @@ begin
     'firewall_assets','firewall_policy_snapshots','firewall_security_events',
     'vpn_tunnels','vpn_session_metrics','voip_endpoints','voip_call_quality','voip_trunks',
     'maintenance_windows','operation_requests','operation_approvals','audit_logs',
-    'ai_insights','msp_customer_access'
+    'ai_insights'
   ] loop
     execute format('alter table public.%I enable row level security', t);
     execute format('create policy %I on public.%I for select to authenticated using (exists (select 1 from public.organization_members m where m.organization_id = %I.organization_id and m.user_id = (select auth.uid())))', t || '_members_read', t, t);
@@ -254,7 +254,14 @@ begin
   end loop;
 end $$;
 
--- MSP relationships and integration credentials are not directly readable by clients.
+-- MSP relationship records are backend-managed until explicit cross-tenant consent
+-- and provider/customer authorization policies are implemented.
+alter table public.msp_customer_access enable row level security;
+create policy msp_customer_access_deny_clients on public.msp_customer_access
+  for all to anon, authenticated using (false) with check (false);
+revoke all on public.msp_customer_access from anon, authenticated;
+
+-- Integration credentials are backend-only and never directly readable by clients.
 alter table public.integration_credentials enable row level security;
 create policy integration_credentials_deny_clients on public.integration_credentials
   for all to anon, authenticated using (false) with check (false);
