@@ -13,7 +13,7 @@ class HostCollectorTests(unittest.TestCase):
     @patch("collectors.host.psutil.cpu_percent", return_value=12.5)
     @patch("collectors.host.psutil.virtual_memory", return_value=SimpleNamespace(percent=45.0))
     @patch("collectors.host.psutil.disk_usage", return_value=SimpleNamespace(percent=60.0))
-    @patch("collectors.host.psutil.net_io_counters", return_value=SimpleNamespace(bytes_sent=100, bytes_recv=200))
+    @patch("collectors.host.psutil.net_io_counters", side_effect=[SimpleNamespace(bytes_sent=100, bytes_recv=200), {"eth0": SimpleNamespace(bytes_recv=200, bytes_sent=100, errin=1, errout=2, dropin=3, dropout=4)}])
     @patch("collectors.host.psutil.net_if_stats", return_value={"eth0": SimpleNamespace(isup=True, speed=1000, mtu=1500)})
     @patch("collectors.host.psutil.net_if_addrs", return_value={"eth0": [SimpleNamespace(family=socket.AF_INET, address="192.0.2.10")]})
     def test_normalizes_host_and_interface_metrics(self, *_mocks):
@@ -23,6 +23,9 @@ class HostCollectorTests(unittest.TestCase):
         self.assertEqual(result["interfaces"][0]["name"], "eth0")
         self.assertEqual(result["interfaces"][0]["ipv4"], ["192.0.2.10"])
         self.assertEqual(result["interfaces"][0]["speed_mbps"], 1000)
+        self.assertEqual(result["interfaces"][0]["in_octets"], "200")
+        self.assertEqual(result["interfaces"][0]["out_octets"], "100")
+        self.assertEqual(result["interfaces"][0]["in_errors"], "1")
 
 
 if __name__ == "__main__":
