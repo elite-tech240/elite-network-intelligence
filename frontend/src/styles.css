@@ -546,9 +546,12 @@ small,.muted{font-size:var(--fs-sm)}
 .ws-menu .ws-item>svg:first-child{color:var(--brand-2);flex-shrink:0}
 .ws-sep{height:1px;margin:6px 4px;background:var(--stroke)}
 .ws-empty{margin:4px 10px 8px;font-size:var(--fs-sm);color:var(--muted2)}
-.ws-new{display:flex;gap:8px;padding:4px}
-.ws-new input{flex:1;min-width:0;height:36px!important;font-size:var(--fs-sm)!important}
-.ws-new .primary-action{height:36px;padding:0 12px;white-space:nowrap}
+.modal h3{margin:0 0 8px;font:600 var(--fs-lg) 'Space Grotesk'}
+.modal-text{margin:0 0 20px;font-size:var(--fs-sm);color:var(--muted2);line-height:1.6}
+.modal .field{display:grid;gap:8px;margin-bottom:18px;font-size:var(--fs-sm);font-weight:500;color:#c8d0db}
+.modal .field input{width:100%}
+.ws-steps{margin:0 0 22px;padding-inline-start:20px;display:grid;gap:7px;font-size:var(--fs-sm);color:var(--muted2);line-height:1.5}
+.ws-steps b{color:#dbe2ea;font-weight:500}
 
 /* secondary filter rows must not look like page tabs */
 .filter-bar{display:flex;flex-wrap:wrap;align-items:center;gap:12px;margin:0 0 4px}

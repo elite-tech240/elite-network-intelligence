@@ -58,7 +58,7 @@ export default function App() {
       const { data: newId, error } = await supabase.rpc('create_organization', { p_name: name });
       if (error) throw error;
       activeOrgRef.current = newId as string; setWsName(''); setNewWs(false); setWsOpen(false);
-      await loadWorkspace(session.user); toast('Workspace created');
+      await loadWorkspace(session.user); setPage('Overview'); toast('Workspace created');
     } catch (err: any) { toast(err?.message ?? 'Could not create the workspace'); }
     finally { setWsBusy(false); }
   };
@@ -143,9 +143,7 @@ export default function App() {
           {memberships.map(m => <button key={m.organization_id} role="menuitem" className={m.organization_id === membership?.organization_id ? 'ws-item sel' : 'ws-item'} onClick={() => { setWsOpen(false); switchOrg(m); }}><Building2 size={16}/><span><b>{orgOf(m)}</b><small>{m.role}</small></span>{m.organization_id === membership?.organization_id && <Check size={15}/>}</button>)}
           {!memberships.length && <p className="ws-empty">You have no workspaces yet.</p>}
           <div className="ws-sep"/>
-          {newWs
-            ? <form className="ws-new" onSubmit={createWs}><input autoFocus value={wsName} onChange={e => setWsName(e.target.value)} placeholder="Workspace name"/><button className="primary-action sm" disabled={wsBusy || !wsName.trim()}>{wsBusy ? 'Creating…' : 'Create'}</button></form>
-            : <button role="menuitem" className="ws-item" onClick={() => setNewWs(true)}><Plus size={16}/><span><b>Create workspace</b></span></button>}
+          <button role="menuitem" className="ws-item" onClick={() => { setWsOpen(false); setNewWs(true); }}><Plus size={16}/><span><b>Create workspace</b><small>Start a separate, empty environment</small></span></button>
           </div>}</div>
       <nav>{[['MONITOR', ['Overview','Devices','Topology','Traffic','Alerts','Logs','Uptime']], ['INSIGHTS', ['Reports','Audit log']], ['MANAGE', ['Sites & Networks', ...(membership && ['owner','admin'].includes(membership.role) ? ['Platform'] : [])]]].map(([group, labels]) => <div key={group as string}><div className="nav-label">{tr(lang, group as string)}</div>{[...nav, adminNav].filter(i => (labels as string[]).includes(i.label)).map(item => <button key={item.label} className={page === item.label ? 'nav-item selected' : 'nav-item'} onClick={() => go(item.label)}><item.icon size={17}/>{tr(lang, item.label)}{item.label === 'Alerts' && openAlerts > 0 && <i className="nav-dot"/>}</button>)}</div>)}</nav>
       <div className="nav-label tools-label">{tr(lang, 'PREFERENCES')}</div>
@@ -176,6 +174,15 @@ export default function App() {
           {page === 'Sites & Networks' && <SitesPage key={'t'+pageTab} initialTab={pageTab} sites={sites} networks={networks} organizationId={membership.organization_id} role={membership.role} accessToken={session.access_token} onRefresh={refresh}/>}
           {page === 'Settings' && <SettingsPage key={'s'+pageTab} initialTab={pageTab} user={session.user} membership={membership} accessToken={session.access_token} onSignOut={signOut}/>}
         </>}
+        {newWs && <div className="modal-back" onClick={() => !wsBusy && setNewWs(false)}><div className="modal" role="dialog" aria-modal="true" aria-label="Create workspace" onClick={e => e.stopPropagation()}>
+          <div className="modal-icon"><Building2 size={21}/></div>
+          <h3>Create workspace</h3>
+          <p className="modal-text">A workspace is a separate environment with its own sites, devices, alerts and team. Nothing is shared with {orgName}.</p>
+          <form onSubmit={createWs}>
+            <label className="field">Workspace name<input autoFocus value={wsName} maxLength={80} onChange={e => setWsName(e.target.value)} placeholder="Acme Head Office"/></label>
+            <ol className="ws-steps"><li>You join it as <b>owner</b>.</li><li>Add a site and a network.</li><li>Install the agent to start collecting data.</li></ol>
+            <div className="modal-actions"><button type="button" className="secondary-action" onClick={() => setNewWs(false)} disabled={wsBusy}>Cancel</button><button className="primary-action" disabled={wsBusy || !wsName.trim()}>{wsBusy ? 'Creating…' : 'Create workspace'}</button></div>
+          </form></div></div>}
         {noc && membership && <NocWall devices={devices} organizationId={membership.organization_id} onClose={() => setNoc(false)}/>}
         <div className="footer"><span>ELITE NETWORK INTELLIGENCE <b>v0.4.0</b></span><span>Secure workspace · {membership?.role ?? 'No role'}</span></div>
       </section>
