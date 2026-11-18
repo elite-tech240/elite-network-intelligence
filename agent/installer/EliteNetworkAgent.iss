@@ -1,5 +1,5 @@
 #define AppName "Elite Network Intelligence Agent"
-#define AppVersion "0.3.1"
+#define AppVersion "0.4.0"
 [Setup]
 AppId={{A1D3D4B1-93F1-4C86-9F15-8B91E84E1A20}
 AppName={#AppName}

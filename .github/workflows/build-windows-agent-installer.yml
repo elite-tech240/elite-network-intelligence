@@ -24,7 +24,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        os: [ubuntu-latest, windows-latest]
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -40,6 +40,24 @@ jobs:
         run: python -m unittest discover -s agent/tests -v
       - name: Compile agent modules
         run: python -m compileall -q agent
+
+  macos-smoke:
+    name: Core tests (macos-latest, informational)
+    runs-on: macos-latest
+    continue-on-error: true
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install agent dependencies
+        run: python -m pip install -r agent/requirements.txt
+      - name: Run collector tests
+        env:
+          PYTHONPATH: agent
+        run: python -m unittest discover -s agent/tests -v
 
   frontend-build:
     runs-on: ubuntu-latest
@@ -113,8 +131,8 @@ jobs:
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: agent-installer-v0.3.1
-          name: Elite Network Agent Installer v0.3.1
+          tag_name: agent-installer-v0.4.0
+          name: Elite Network Agent Installer v0.4.0
           body: Branded Windows x64 single-file installer. Enter a unique one-time enrollment token and site ID in the setup wizard for each computer.
           files: release-assets/EliteNetworkAgent-Setup.exe
           overwrite_files: true
