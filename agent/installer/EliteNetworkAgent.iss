@@ -1,5 +1,5 @@
 #define AppName "Elite Network Intelligence Agent"
-#define AppVersion "0.3.0"
+#define AppVersion "0.3.1"
 [Setup]
 AppId={{A1D3D4B1-93F1-4C86-9F15-8B91E84E1A20}
 AppName={#AppName}
@@ -68,8 +68,16 @@ begin
       '  "ELITE_AGENT_STATE": "C:\\ProgramData\\EliteNetworkIntelligence\\Agent\\device-state.json"' + #13#10 +
       '}';
     if not SaveStringToFile(ConfigPath, ConfigText, False) then RaiseException('Could not write agent configuration.');
+    { Recover from a prior interrupted setup that left the service registered. }
+    Exec(ExpandConstant('{sys}\sc.exe'), 'query EliteNetworkAgent', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+    if ResultCode = 0 then
+    begin
+      Exec(ExpandConstant('{app}\EliteNetworkAgentService.exe'), 'stop', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+      Exec(ExpandConstant('{app}\EliteNetworkAgentService.exe'), 'uninstall', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+      if ResultCode <> 0 then RaiseException('An older monitoring service exists but could not be removed. Open Services.msc and remove EliteNetworkAgent, then run setup again.');
+    end;
     Exec(ExpandConstant('{app}\EliteNetworkAgentService.exe'), 'install', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
-    if ResultCode <> 0 then RaiseException('Could not register the monitoring service.');
+    if ResultCode <> 0 then RaiseException('Could not register the monitoring service. Check EliteNetworkAgentService.wrapper.log for details.');
     Exec(ExpandConstant('{app}\EliteNetworkAgentService.exe'), 'start', '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
     if ResultCode <> 0 then RaiseException('The agent service could not be started.');
   end;
