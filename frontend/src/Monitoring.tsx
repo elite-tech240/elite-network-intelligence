@@ -1,7 +1,7 @@
 import { FormEvent, useCallback, useEffect, useState } from 'react';
 import { supabase, api, fmtBps, fmtUptime, ago, LATEST_AGENT_VERSION, type Role } from './lib';
 import { LineChart, Sparkline, type Point } from './Chart';
-import { Flash, confirmDialog, Skeleton } from './ui';
+import { Flash, confirmDialog, Skeleton, Select } from './ui';
 
 type Dev = { id: string; hostname: string; agent_version?: string | null };
 const isOp = (r: Role) => ['owner', 'admin', 'operator'].includes(r);
@@ -32,9 +32,9 @@ export function LogsPage({ organizationId, devices }: { organizationId: string; 
   return <div className="sites-workspace">
     <section className="panel page-panel"><div className="panel-head"><div><h3>Device logs</h3><p>Warnings, errors and failed sign-ins collected read-only from each device (kept 30 days).</p></div></div>
       <div className="filter-bar">
-        <select className="filter-select" value={device} onChange={e => setDevice(e.target.value)}><option value="all">All devices</option>{devices.map(d => <option key={d.id} value={d.id}>{d.hostname}</option>)}</select>
-        <select className="filter-select" value={level} onChange={e => setLevel(e.target.value)}><option value="all">All levels</option><option value="critical">Critical</option><option value="error">Error</option><option value="warning">Warning</option><option value="audit_failure">Failed sign-in</option><option value="info">Info</option></select>
-        <select className="filter-select" value={range} onChange={e => setRange(e.target.value)}><option value="1">Last hour</option><option value="24">Last 24 hours</option><option value="168">Last 7 days</option><option value="720">Last 30 days</option></select>
+        <Select className="filter-select" value={device} onChange={e => setDevice(e.target.value)}><option value="all">All devices</option>{devices.map(d => <option key={d.id} value={d.id}>{d.hostname}</option>)}</Select>
+        <Select className="filter-select" value={level} onChange={e => setLevel(e.target.value)}><option value="all">All levels</option><option value="critical">Critical</option><option value="error">Error</option><option value="warning">Warning</option><option value="audit_failure">Failed sign-in</option><option value="info">Info</option></Select>
+        <Select className="filter-select" value={range} onChange={e => setRange(e.target.value)}><option value="1">Last hour</option><option value="24">Last 24 hours</option><option value="168">Last 7 days</option><option value="720">Last 30 days</option></Select>
         <input className="filter-input" placeholder="Search message…" value={q} onChange={e => setQ(e.target.value)}/>
         <button className="secondary-action" onClick={() => {
           const csv = ['time,device,level,source,event_id,message', ...rows.map(r => [r.logged_at, name(r.device_id), r.level, r.source, r.event_id ?? '', '"' + String(r.message).replace(/"/g, '""').replace(/\n/g, ' ') + '"'].join(','))].join('\n');
@@ -73,11 +73,11 @@ export function UptimePage({ organizationId, role, token, sites }: { organizatio
     <Flash kind="success" msg={msg}/><Flash kind="error" msg={err}/>
     {isOp(role) && <form className="panel asset-form" onSubmit={add}><h3>Add uptime check</h3>
       <label>Name<input value={name} onChange={e => setName(e.target.value)} required maxLength={80} placeholder="Company website"/></label>
-      <label>Type<select value={type} onChange={e => { setType(e.target.value); setTarget(e.target.value === 'http' ? 'https://' : ''); }}><option value="http">HTTP(S) page</option><option value="tcp">TCP port</option></select></label>
+      <label>Type<Select value={type} onChange={e => { setType(e.target.value); setTarget(e.target.value === 'http' ? 'https://' : ''); }}><option value="http">HTTP(S) page</option><option value="tcp">TCP port</option></Select></label>
       <label className="span-2">{type === 'http' ? 'URL' : 'Host'}<input value={target} onChange={e => setTarget(e.target.value)} required placeholder={type === 'http' ? 'https://example.com' : 'mail.example.com'}/></label>
-      <label>Check every<select value={interval} onChange={e => setIntervalS(e.target.value)}><option value="60">1 minute</option><option value="300">5 minutes</option><option value="900">15 minutes</option><option value="3600">1 hour</option></select></label>
+      <label>Check every<Select value={interval} onChange={e => setIntervalS(e.target.value)}><option value="60">1 minute</option><option value="300">5 minutes</option><option value="900">15 minutes</option><option value="3600">1 hour</option></Select></label>
       {type === 'tcp' && <label>Port<input type="number" min="1" max="65535" value={port} onChange={e => setPort(e.target.value)} required/></label>}
-      <div className="form-actions"><button className="primary-action" disabled={busy === 'add'}>{busy === 'add' ? 'Saving…' : 'Create check'}</button></div>
+      <div className="form-cta"><button className="primary-action" disabled={busy === 'add'}>{busy === 'add' ? 'Saving…' : 'Create check'}</button></div>
       <p className="muted form-note">Checks run from the cloud, so only public internet targets are allowed (private/local addresses are blocked). A check turns “down” after 2 failures in a row.</p></form>}
     <section className="panel page-panel"><div className="panel-head"><div><h3>Uptime checks</h3><p>Availability of websites and services, last 24 hours of latency.</p></div></div>
       <div className="table-wrap"><table><thead><tr><th>CHECK</th><th>TARGET</th><th>STATUS</th><th>LATENCY (24H)</th><th>LAST RUN</th><th></th></tr></thead><tbody>
@@ -94,7 +94,7 @@ export function ReportsPage({ organizationId, token }: { organizationId: string;
   const [days, setDays] = useState(7); const [r, setR] = useState<any>(null); const [err, setErr] = useState(''); const [loading, setLoading] = useState(false);
   useEffect(() => { let on = true; setLoading(true); setErr(''); api(`/reports/summary?organization_id=${organizationId}&days=${days}`, token).then(d => on && setR(d)).catch(e => on && setErr(e.message)).finally(() => on && setLoading(false)); return () => { on = false; }; }, [organizationId, days, token]);
   return <div className="sites-workspace report-page">
-    <div className="tabs-row no-print"><p className="muted">Availability, usage and incidents for the selected period.</p><div className="sites-actions"><select className="filter-select" value={days} onChange={e => setDays(Number(e.target.value))}><option value={7}>Last 7 days</option><option value={30}>Last 30 days</option><option value={90}>Last 90 days</option></select><button className="primary-action" onClick={() => window.print()} disabled={!r}>Print / Save as PDF</button></div></div>
+    <div className="tabs-row no-print"><p className="muted">Availability, usage and incidents for the selected period.</p><div className="sites-actions"><Select className="filter-select" value={days} onChange={e => setDays(Number(e.target.value))}><option value={7}>Last 7 days</option><option value={30}>Last 30 days</option><option value={90}>Last 90 days</option></Select><button className="primary-action" onClick={() => window.print()} disabled={!r}>Print / Save as PDF</button></div></div>
     <Flash kind="error" msg={err}/>{loading && <Skeleton rows={4}/>}
     {r && <>
       <section className="panel page-panel"><div className="panel-head"><div><h3>Devices</h3><p>{r.period.from.slice(0, 10)} → {r.period.to.slice(0, 10)}</p></div></div><div className="table-wrap"><table><thead><tr><th>DEVICE</th><th>AVAILABILITY</th><th>CPU AVG</th><th>MEMORY AVG</th><th>DISK MAX</th><th>AVG DOWNLOAD</th><th>AVG UPLOAD</th></tr></thead><tbody>
@@ -113,7 +113,7 @@ export function AuditPage({ organizationId }: { organizationId: string }) {
   const [rows, setRows] = useState<any[]>([]); const [action, setAction] = useState('all');
   const load = useCallback(async () => { if (!supabase) return; let q = supabase.from('audit_logs').select('id,actor_type,actor_user_id,action,resource_type,resource_id,outcome,details,occurred_at').eq('organization_id', organizationId).order('occurred_at', { ascending: false }).limit(200); if (action !== 'all') q = q.eq('resource_type', action); const { data } = await q; setRows(data ?? []); }, [organizationId, action]);
   useTick(() => void load(), 20000, [load]);
-  return <div className="sites-workspace"><section className="panel page-panel"><div className="panel-head"><div><h3>Audit log</h3><p>Who changed what. Entries cannot be edited.</p></div><select className="filter-select" value={action} onChange={e => setAction(e.target.value)}><option value="all">Everything</option><option value="device">Devices</option><option value="enrollment_token">Enrollment tokens</option><option value="alert_rules">Alert rules</option><option value="uptime_checks">Uptime checks</option><option value="notification_channels">Notification channels</option><option value="organization_member">Team</option></select></div>
+  return <div className="sites-workspace"><section className="panel page-panel"><div className="panel-head"><div><h3>Audit log</h3><p>Who changed what. Entries cannot be edited.</p></div><Select className="filter-select" value={action} onChange={e => setAction(e.target.value)}><option value="all">Everything</option><option value="device">Devices</option><option value="enrollment_token">Enrollment tokens</option><option value="alert_rules">Alert rules</option><option value="uptime_checks">Uptime checks</option><option value="notification_channels">Notification channels</option><option value="organization_member">Team</option></Select></div>
     <div className="table-wrap"><table><thead><tr><th>WHEN</th><th>ACTOR</th><th>ACTION</th><th>RESOURCE</th><th>RESULT</th><th>DETAILS</th></tr></thead><tbody>
       {rows.map(r => <tr key={r.id}><td>{new Date(r.occurred_at).toLocaleString()}</td><td>{r.actor_type}{r.actor_user_id ? ' · ' + String(r.actor_user_id).slice(0, 8) : ''}</td><td><b>{r.action}</b></td><td>{r.resource_type}</td><td>{r.outcome}</td><td className="wrap-cell muted">{r.details && Object.keys(r.details).length ? JSON.stringify(r.details).slice(0, 140) : ''}</td></tr>)}
       {!rows.length && <Empty cols={6} text="No audit entries yet."/>}</tbody></table></div></section></div>;
@@ -154,9 +154,9 @@ export function ChannelsPanel({ organizationId, role, token }: { organizationId:
   return <div className="sites-workspace"><Flash kind="success" msg={msg}/><Flash kind="error" msg={err}/>
     <form className="panel asset-form" onSubmit={add}><h3>Add notification channel</h3>
       <label>Name<input value={name} onChange={e => setName(e.target.value)} required maxLength={60} placeholder="IT team"/></label>
-      <label>Type<select value={type} onChange={e => { setType(e.target.value); setDest(''); }}><option value="email">Email</option><option value="telegram">Telegram</option><option value="webhook">Webhook (Slack, Teams, etc.)</option></select></label>
+      <label>Type<Select value={type} onChange={e => { setType(e.target.value); setDest(''); }}><option value="email">Email</option><option value="telegram">Telegram</option><option value="webhook">Webhook (Slack, Teams, etc.)</option></Select></label>
       <label>{type === 'email' ? 'Email address' : type === 'telegram' ? 'Telegram chat ID' : 'HTTPS webhook URL'}<input value={dest} onChange={e => setDest(e.target.value)} required placeholder={type === 'email' ? 'it@company.com' : type === 'telegram' ? '123456789' : 'https://hooks.example.com/…'}/></label>
-      <label>Send alerts from<select value={sev} onChange={e => setSev(e.target.value)}><option value="info">Everything</option><option value="warning">Warning and above</option><option value="critical">Critical only</option></select></label>
+      <label>Send alerts from<Select value={sev} onChange={e => setSev(e.target.value)}><option value="info">Everything</option><option value="warning">Warning and above</option><option value="critical">Critical only</option></Select></label>
       <div className="form-actions"><button className="primary-action">Add channel</button></div>
       <p className="muted form-note">Email needs RESEND_API_KEY and Telegram needs TELEGRAM_BOT_TOKEN set on the server; until then sends show as “skipped”. Weekly reports go to email channels on Mondays.</p></form>
     <section className="panel page-panel"><div className="table-wrap"><table><thead><tr><th>CHANNEL</th><th>TYPE</th><th>DESTINATION</th><th>MIN. SEVERITY</th><th></th></tr></thead><tbody>
@@ -173,7 +173,7 @@ export function MaintenancePanel({ organizationId, role }: { organizationId: str
   const end = async (id: string) => { await supabase?.from('maintenance_windows').update({ ends_at: new Date().toISOString() }).eq('id', id); void load(); };
   const active = (w: any) => new Date(w.starts_at).getTime() <= Date.now() && new Date(w.ends_at).getTime() >= Date.now();
   return <div className="sites-workspace"><Flash kind="error" msg={err}/>
-    {isOp(role) && <form className="panel asset-form" onSubmit={start}><h3>Start a maintenance window</h3><label>Reason<input value={name} onChange={e => setName(e.target.value)} required maxLength={80}/></label><label>For<select value={mins} onChange={e => setMins(e.target.value)}><option value="30">30 minutes</option><option value="60">1 hour</option><option value="240">4 hours</option><option value="720">12 hours</option></select></label><div className="form-actions"><button className="primary-action">Start now</button></div><p className="muted form-note">While a window is active, new alerts and notifications are paused so planned work does not page anyone.</p></form>}
+    {isOp(role) && <form className="panel asset-form" onSubmit={start}><h3>Start a maintenance window</h3><label>Reason<input value={name} onChange={e => setName(e.target.value)} required maxLength={80}/></label><label>For<Select value={mins} onChange={e => setMins(e.target.value)}><option value="30">30 minutes</option><option value="60">1 hour</option><option value="240">4 hours</option><option value="720">12 hours</option></Select></label><div className="form-actions"><button className="primary-action">Start now</button></div><p className="muted form-note">While a window is active, new alerts and notifications are paused so planned work does not page anyone.</p></form>}
     <section className="panel page-panel"><div className="table-wrap"><table><thead><tr><th>WINDOW</th><th>FROM</th><th>UNTIL</th><th></th></tr></thead><tbody>{rows.map(w => <tr key={w.id}><td><b>{w.name}</b> {active(w) && <span className="status-pill pending"><i/>active</span>}</td><td>{new Date(w.starts_at).toLocaleString()}</td><td>{new Date(w.ends_at).toLocaleString()}</td><td>{isOp(role) && active(w) && <button className="secondary-action" onClick={() => end(w.id)}>End now</button>}</td></tr>)}{!rows.length && <Empty cols={4} text="No maintenance windows."/>}</tbody></table></div></section></div>;
 }
 
@@ -184,7 +184,7 @@ export function DiscoveryPanel({ organizationId, role, sites }: { organizationId
   useTick(() => void load(), 30000, [load]);
   const set = async (id: string, state: string) => { await supabase?.from('discovered_hosts').update({ state }).eq('id', id); void load(); };
   const list = rows.filter(r => show === 'all' || r.state === show);
-  return <section className="panel page-panel"><div className="panel-head"><div><h3>Discovered on your network</h3><p>Read from each agent's ARP table — nothing is scanned or probed. The first report from a site is treated as the baseline.</p></div><select className="filter-select" value={show} onChange={e => setShow(e.target.value)}><option value="new">New</option><option value="known">Known</option><option value="ignored">Ignored</option><option value="all">All</option></select></div>
+  return <section className="panel page-panel"><div className="panel-head"><div><h3>Discovered on your network</h3><p>Read from each agent's ARP table — nothing is scanned or probed. The first report from a site is treated as the baseline.</p></div><Select className="filter-select" value={show} onChange={e => setShow(e.target.value)}><option value="new">New</option><option value="known">Known</option><option value="ignored">Ignored</option><option value="all">All</option></Select></div>
     <div className="table-wrap"><table><thead><tr><th>IP</th><th>MAC</th><th>SITE</th><th>FIRST SEEN</th><th>LAST SEEN</th><th>STATE</th><th></th></tr></thead><tbody>
       {list.map(r => <tr key={r.id}><td><b>{r.ip_address}</b></td><td><code>{r.mac_address}</code></td><td>{sites.find(s => s.id === r.site_id)?.name ?? '—'}</td><td>{new Date(r.first_seen_at).toLocaleString()}</td><td>{ago(r.last_seen_at)}</td><td><span className={`status-pill ${r.state === 'new' ? 'pending' : r.state === 'known' ? 'online' : 'offline'}`}><i/>{r.state}</span></td>
         <td>{isOp(role) && <div className="row-actions">{r.state !== 'known' && <button className="secondary-action" onClick={() => set(r.id, 'known')}>Mark known</button>}{r.state !== 'ignored' && <button className="secondary-action" onClick={() => set(r.id, 'ignored')}>Ignore</button>}</div>}</td></tr>)}
@@ -208,7 +208,7 @@ export function DeviceDetail({ devices, initialId }: { devices: Dev[]; initialId
   const outdated = dev?.agent_version && dev.agent_version !== LATEST_AGENT_VERSION;
   if (!devices.length) return <section className="panel empty-panel"><h3>No devices yet</h3><p>Enroll an agent to see charts here.</p></section>;
   return <div className="sites-workspace">
-    <div className="filter-bar"><select className="filter-select" value={id} onChange={e => setId(e.target.value)}>{devices.map(d => <option key={d.id} value={d.id}>{d.hostname}</option>)}</select>
+    <div className="filter-bar"><Select className="filter-select" value={id} onChange={e => setId(e.target.value)}>{devices.map(d => <option key={d.id} value={d.id}>{d.hostname}</option>)}</Select>
       <Tabs items={Object.entries(RANGES).map(([k, v]) => ({ id: k, label: v.label }))} active={range} onChange={setRange}/></div>
     <div className="kpi-strip"><div className="panel mini-kpi"><span>Uptime</span><b>{fmtUptime(latest?.uptime_seconds)}</b></div><div className="panel mini-kpi"><span>Last report</span><b>{ago(latest?.recorded_at)}</b></div><div className="panel mini-kpi"><span>Agent</span><b>{dev?.agent_version ?? 'unknown'}</b>{outdated && <small className="txt-warn">update available ({LATEST_AGENT_VERSION})</small>}</div></div>
     <div className="two-col">
@@ -224,14 +224,20 @@ export function DeviceDetail({ devices, initialId }: { devices: Dev[]; initialId
 }
 
 /* ---------------------------------------------------- NOC wall (full screen) */
-export function NocWall({ devices, organizationId, onClose }: { devices: { id: string; hostname: string; status: string; last_seen_at: string | null }[]; organizationId: string; onClose: () => void }) {
-  const [alerts, setAlerts] = useState<any[]>([]);
-  useTick(() => { supabase?.from('alert_events').select('id,title,severity,triggered_at').eq('organization_id', organizationId).in('status', ['open', 'acknowledged']).order('triggered_at', { ascending: false }).limit(8).then(({ data }) => setAlerts(data ?? [])); }, 10000, [organizationId]);
+export function NocWall({ devices, organizationId, onClose }: { devices: { id: string; hostname: string; status: string; last_seen_at: string | null; ip_address?: string | null }[]; organizationId: string; onClose: () => void }) {
+  const [alerts, setAlerts] = useState<any[]>([]); const [now, setNow] = useState(Date.now());
+  useTick(() => { setNow(Date.now()); supabase?.from('alert_events').select('id,title,severity,triggered_at').eq('organization_id', organizationId).in('status', ['open', 'acknowledged']).order('triggered_at', { ascending: false }).limit(8).then(({ data }) => setAlerts(data ?? [])); }, 10000, [organizationId]);
+  useEffect(() => { const t = window.setInterval(() => setNow(Date.now()), 1000); return () => window.clearInterval(t); }, []);
   useEffect(() => { const k = (e: KeyboardEvent) => e.key === 'Escape' && onClose(); window.addEventListener('keydown', k); return () => window.removeEventListener('keydown', k); }, [onClose]);
   const state = (d: any) => !d.last_seen_at || Date.now() - new Date(d.last_seen_at).getTime() > 120000 ? 'offline' : d.status;
-  const up = devices.filter(d => state(d) === 'online').length;
-  return <div className="noc-wall"><button className="secondary-action noc-close" onClick={onClose}>Close (Esc)</button>
-    <div className="noc-head"><div><span className="overview-kicker">NETWORK OPERATIONS CENTER</span><h1>{up} / {devices.length} online</h1></div><div className="noc-clock">{new Date().toLocaleTimeString()}</div></div>
-    <div className="noc-grid">{devices.map(d => <div key={d.id} className={`noc-tile ${state(d)}`}><b>{d.hostname}</b><span>{state(d)}</span></div>)}</div>
-    <h2 className="noc-sub">Open alerts</h2>{alerts.length ? alerts.map(a => <div key={a.id} className={`noc-alert sev-${a.severity}`}>{a.title}<small>{ago(a.triggered_at)}</small></div>) : <p className="muted">No open alerts.</p>}</div>;
+  const up = devices.filter(d => state(d) === 'online').length; const down = devices.length - up;
+  const sorted = [...devices].sort((a, b) => Number(state(a) === 'online') - Number(state(b) === 'online') || a.hostname.localeCompare(b.hostname));
+  return <div className="noc2" role="dialog" aria-label="NOC wall">
+    <header className="noc2-head"><div className="noc2-brand"><img src="/elite-network-mark.svg" alt=""/><div><b>ELITE</b><span>NETWORK OPERATIONS CENTER</span></div></div>
+      <div className="noc2-clock"><strong>{new Date(now).toLocaleTimeString()}</strong><span>{new Date(now).toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long' })}</span></div>
+      <button className="secondary-action" onClick={onClose}>Exit · Esc</button></header>
+    <div className="noc2-stats"><div className="noc2-stat ok"><span>Online</span><strong>{up}</strong></div><div className={down ? 'noc2-stat bad' : 'noc2-stat'}><span>Offline</span><strong>{down}</strong></div><div className="noc2-stat"><span>Total devices</span><strong>{devices.length}</strong></div><div className={alerts.length ? 'noc2-stat warn' : 'noc2-stat'}><span>Open alerts</span><strong>{alerts.length}</strong></div></div>
+    <div className="noc2-body"><section><h2>Devices</h2><div className="noc2-grid">{sorted.map(d => <div key={d.id} className={`noc2-tile ${state(d)}`}><i/><div><b>{d.hostname}</b><small>{d.ip_address ?? state(d)}</small></div><span>{state(d)}</span></div>)}{!devices.length && <p className="muted">No devices enrolled yet.</p>}</div></section>
+      <aside><h2>Open alerts</h2>{alerts.length ? alerts.map(a => <div key={a.id} className={`noc2-alert sev-${a.severity}`}><b>{a.title}</b><small>{ago(a.triggered_at)}</small></div>) : <div className="noc2-clear">All clear</div>}</aside></div>
+  </div>;
 }

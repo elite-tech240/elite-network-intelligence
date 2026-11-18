@@ -1,3 +1,4 @@
+import { Select } from './ui';
 import { useState } from 'react';
 import { Check, Copy, Download, Terminal } from 'lucide-react';
 import { api, apiUrl } from './lib';
@@ -38,9 +39,9 @@ export function AgentInstaller({ sites, organizationId, accessToken, canManage }
     <div className="installer-step"><span className="step-num">1</span><div className="step-body">
       <h4>Choose where the device lives</h4>
       <div className="installer-row">
-        <select className="filter-select installer-select" value={siteId} onChange={e => { setSite(e.target.value); setToken(''); }} aria-label="Site">
+        <Select className="filter-select installer-select" value={siteId} onChange={e => { setSite(e.target.value); setToken(''); }} aria-label="Site">
           {sites.map(v => <option key={v.id} value={v.id}>{v.name}</option>)}
-        </select>
+        </Select>
         <button className="primary-action" onClick={generate} disabled={busy || !apiUrl || !sites.length}>{busy ? 'Generating…' : token ? 'Generate a new token' : 'Generate install token'}</button>
       </div>
       {!sites.length && <p className="muted">Add a site first (Sites tab).</p>}

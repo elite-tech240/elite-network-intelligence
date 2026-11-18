@@ -1,5 +1,5 @@
-import { ReactNode, useEffect, useMemo, useRef, useState } from 'react';
-import { ArrowDown, ArrowUp, CheckCircle2, Circle, Search, X } from 'lucide-react';
+import { Children, ReactNode, isValidElement, useEffect, useMemo, useRef, useState } from 'react';
+import { AlertTriangle, ArrowDown, ArrowUp, Check, CheckCircle2, ChevronDown, Circle, Search, X } from 'lucide-react';
 
 /* ---------- preferences (theme, language, density, onboarding) ---------- */
 export type Prefs = { theme: 'dark' | 'light'; lang: 'en' | 'ar'; dense: boolean; onboardDone: boolean };
@@ -50,18 +50,51 @@ export function Flash({ msg, kind }: { msg?: string; kind: ToastItem['kind'] }) 
 }
 
 /* ---------- confirm dialog (replaces window.confirm) ---------- */
-let ask: ((m: string) => Promise<boolean>) | null = null;
-export const confirmDialog = (message: string): Promise<boolean> => ask ? ask(message) : Promise.resolve(window.confirm(message));
+type ConfirmOpts = { confirmText?: string; danger?: boolean; title?: string };
+let ask: ((m: string, o?: ConfirmOpts) => Promise<boolean>) | null = null;
+export const confirmDialog = (message: string, opts?: ConfirmOpts): Promise<boolean> => ask ? ask(message, opts) : Promise.resolve(window.confirm(message));
 export function ConfirmHost({ lang }: { lang: Prefs['lang'] }) {
-  const [s, setS] = useState<{ m: string; r: (v: boolean) => void } | null>(null);
-  useEffect(() => { ask = m => new Promise(r => setS({ m, r })); return () => { ask = null; }; }, []);
+  const [s, setS] = useState<{ m: string; o?: ConfirmOpts; r: (v: boolean) => void } | null>(null);
+  useEffect(() => { ask = (m, o) => new Promise(r => setS({ m, o, r })); return () => { ask = null; }; }, []);
   useEffect(() => { if (!s) return; const k = (e: KeyboardEvent) => { if (e.key === 'Escape') { s.r(false); setS(null); } }; window.addEventListener('keydown', k); return () => window.removeEventListener('keydown', k); }, [s]);
   if (!s) return null;
   const done = (v: boolean) => { s.r(v); setS(null); };
+  const danger = s.o?.danger ?? /delete|remove|revoke|uninstall|archive/i.test(s.m);
   return <div className="modal-back" onClick={() => done(false)}><div className="modal" role="alertdialog" aria-modal="true" onClick={e => e.stopPropagation()}>
-    <h3>{tr(lang, 'Are you sure?')}</h3><p>{s.m}</p>
-    <div className="modal-actions"><button className="secondary-action" onClick={() => done(false)}>{tr(lang, 'Cancel')}</button><button className="danger-action" autoFocus onClick={() => done(true)}>{tr(lang, 'Confirm')}</button></div>
+    <span className={danger ? 'modal-icon danger' : 'modal-icon'}><AlertTriangle size={20}/></span>
+    <h3>{s.o?.title ?? tr(lang, 'Are you sure?')}</h3><p>{s.m}</p>
+    <div className="modal-actions"><button className="secondary-action" onClick={() => done(false)}>{tr(lang, 'Cancel')}</button><button className={danger ? 'danger-solid' : 'primary-action'} autoFocus onClick={() => done(true)}>{s.o?.confirmText ?? tr(lang, 'Confirm')}</button></div>
   </div></div>;
+}
+
+/* ---------- custom select (drop-in for <select>) ---------- */
+type Opt = { value: string; label: ReactNode; disabled?: boolean };
+function flatOptions(ch: ReactNode): Opt[] {
+  const out: Opt[] = [];
+  Children.forEach(ch, c => { if (!isValidElement(c)) return; const p: any = c.props; if (c.type === 'option') out.push({ value: String(p.value ?? p.children), label: p.children, disabled: p.disabled }); else out.push(...flatOptions(p.children)); });
+  return out;
+}
+export function Select({ value, onChange, children, className = '', disabled, id }: { value: string | number; onChange: (e: { target: { value: string } }) => void; children: ReactNode; className?: string; disabled?: boolean; id?: string }) {
+  const opts = flatOptions(children); const cur = opts.find(o => o.value === String(value));
+  const [open, setOpen] = useState(false); const [up, setUp] = useState(false); const [hi, setHi] = useState(0); const box = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const off = (e: MouseEvent) => { if (!box.current?.contains(e.target as Node)) setOpen(false); };
+    document.addEventListener('mousedown', off); return () => document.removeEventListener('mousedown', off);
+  }, [open]);
+  const toggle = () => {
+    if (disabled) return;
+    if (!open && box.current) { const r = box.current.getBoundingClientRect(); const need = Math.min(opts.length * 38 + 14, 280); setUp(window.innerHeight - r.bottom < need && r.top > window.innerHeight - r.bottom); setHi(Math.max(0, opts.findIndex(o => o.value === String(value)))); }
+    setOpen(o => !o);
+  };
+  const pick = (o?: Opt) => { if (!o || o.disabled) return; onChange({ target: { value: o.value } }); setOpen(false); };
+  return <div ref={box} className={`select ${open ? 'open' : ''} ${className}`}>
+    <button type="button" id={id} className="select-btn" disabled={disabled} aria-haspopup="listbox" aria-expanded={open} onClick={toggle}
+      onKeyDown={e => { if (e.key === 'Escape') setOpen(false); else if (e.key === 'ArrowDown') { e.preventDefault(); if (!open) toggle(); else setHi(h => Math.min(h + 1, opts.length - 1)); } else if (e.key === 'ArrowUp') { e.preventDefault(); setHi(h => Math.max(h - 1, 0)); } else if (e.key === 'Enter' && open) { e.preventDefault(); pick(opts[hi]); } }}>
+      <span>{cur?.label ?? ''}</span><ChevronDown size={16}/>
+    </button>
+    {open && <ul className={up ? 'select-menu up' : 'select-menu'} role="listbox">{opts.map((o, i) => <li key={o.value + i} role="option" aria-selected={o.value === String(value)} className={`${i === hi ? 'hi' : ''} ${o.value === String(value) ? 'sel' : ''} ${o.disabled ? 'dis' : ''}`} onMouseEnter={() => setHi(i)} onClick={() => pick(o)}><span>{o.label}</span>{o.value === String(value) && <Check size={15}/>}</li>)}</ul>}
+  </div>;
 }
 
 /* ---------- loading and empty states ---------- */
