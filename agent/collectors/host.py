@@ -2,6 +2,7 @@
 from __future__ import annotations
 import os
 import platform
+import time
 from typing import Any
 import psutil
 
@@ -10,6 +11,40 @@ def _system_volume() -> str:
         drive = os.environ.get("SystemDrive", "C:")
         return drive.rstrip("\\") + "\\"
     return "/"
+
+_prev_net: tuple[float, int, int] | None = None
+
+
+def _top_processes(limit: int = 8) -> list[dict[str, Any]]:
+    """Top processes by CPU then memory. Names only: no command lines, no user data."""
+    cores = psutil.cpu_count() or 1
+    rows = []
+    for proc in psutil.process_iter(["name", "cpu_percent", "memory_info"]):
+        try:
+            info = proc.info
+            mem = info.get("memory_info")
+            rows.append({"name": str(info.get("name") or "unknown")[:80],
+                         "cpu": round((info.get("cpu_percent") or 0) / cores, 1),
+                         "memory_mb": int((mem.rss if mem else 0) / 1048576)})
+        except (psutil.Error, OSError):
+            continue
+    rows.sort(key=lambda r: (r["cpu"], r["memory_mb"]), reverse=True)
+    return rows[:limit]
+
+
+def _net_rates(counters) -> tuple[float | None, float | None]:
+    global _prev_net
+    now = time.monotonic()
+    rates = (None, None)
+    if counters and _prev_net:
+        elapsed = now - _prev_net[0]
+        sent, recv = counters.bytes_sent - _prev_net[1], counters.bytes_recv - _prev_net[2]
+        if elapsed > 0 and sent >= 0 and recv >= 0:
+            rates = (round(sent / elapsed, 1), round(recv / elapsed, 1))
+    if counters:
+        _prev_net = (now, counters.bytes_sent, counters.bytes_recv)
+    return rates
+
 
 def collect_host_metrics() -> dict[str, Any]:
     """Return normalized host metrics and interface inventory without changing state."""
@@ -38,7 +73,10 @@ def collect_host_metrics() -> dict[str, Any]:
         disk_percent = psutil.disk_usage(_system_volume()).percent
     except (OSError, PermissionError):
         disk_percent = None
-    return {"platform": platform.system(), "platform_release": platform.release(),
+    sent_bps, recv_bps = _net_rates(counters)
+    return {"uptime_seconds": int(time.time() - psutil.boot_time()), "net_sent_bps": sent_bps,
+        "net_recv_bps": recv_bps, "top_processes": _top_processes(),
+        "platform": platform.system(), "platform_release": platform.release(),
         "architecture": platform.machine(), "cpu_percent": psutil.cpu_percent(interval=1),
         "memory_percent": psutil.virtual_memory().percent, "disk_percent": disk_percent,
         "bytes_sent": counters.bytes_sent if counters else 0,

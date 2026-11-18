@@ -31,12 +31,18 @@ for _config_file in _config_candidates:
 import psutil
 import requests
 from collectors.host import collect_host_metrics
+from collectors.logs import collect_logs
+from collectors.discovery import collect_neighbours
+
+AGENT_VERSION = "0.4.0"
 
 API_URL = os.getenv("ELITE_API_URL", "http://127.0.0.1:8000").rstrip("/")
 ENROLLMENT_TOKEN = os.getenv("ELITE_ENROLLMENT_TOKEN", "")
 SITE_ID = os.getenv("ELITE_SITE_ID", "")
 INTERVAL = max(15, int(os.getenv("ELITE_INTERVAL_SECONDS", "30")))
 STATE_FILE = Path(os.getenv("ELITE_AGENT_STATE", str(Path.home() / ".elite-network-agent.json")))
+LOG_INTERVAL = 60
+DISCOVERY_INTERVAL = 600
 SNMP_TARGETS = json.loads(os.getenv("ELITE_SNMP_TARGETS", "[]"))
 
 
@@ -63,7 +69,7 @@ def enroll():
         "enrollment_token": ENROLLMENT_TOKEN, "site_id": SITE_ID,
         "hostname": socket.gethostname(),
         "device_type": "server" if platform.system() == "Linux" else "workstation",
-        "os_name": platform.system(), "os_version": platform.release(),
+        "os_name": platform.system(), "os_version": platform.release(), "agent_version": AGENT_VERSION,
         "ip_address": local_ip(), "mac_addresses": mac_addresses(),
     }
     response = requests.post(f"{API_URL}/agents/enroll", json=payload, timeout=20)
@@ -143,6 +149,18 @@ def report_interfaces(state, interfaces):
     return response.json()
 
 
+def post_optional(state, path, body):
+    """Best-effort delivery for logs/discovery: failures never affect core telemetry."""
+    try:
+        response = requests.post(f"{API_URL}/agents/{state['device_id']}/{path}", json=body,
+                                 headers={"Authorization": f"Bearer {state['device_token']}"}, timeout=20)
+        response.raise_for_status()
+        return True
+    except requests.RequestException as exc:
+        print(f"{path} delivery failed:", exc)
+        return False
+
+
 def schedule_windows_uninstall():
     """Launch the registered Inno Setup uninstaller after this service exits."""
     if os.name != "nt":
@@ -176,12 +194,16 @@ def main():
             raise SystemExit("Set ELITE_ENROLLMENT_TOKEN and ELITE_SITE_ID for first enrollment")
         state = enroll()
 
+    last_logs = last_discovery = 0.0
     while True:
         snapshot = collect_host_metrics()
         payload = {
             "status": "online", "cpu_percent": snapshot["cpu_percent"],
             "memory_percent": snapshot["memory_percent"], "disk_percent": snapshot["disk_percent"],
             "bytes_sent": snapshot["bytes_sent"], "bytes_recv": snapshot["bytes_recv"],
+            "uptime_seconds": snapshot["uptime_seconds"], "net_sent_bps": snapshot["net_sent_bps"],
+            "net_recv_bps": snapshot["net_recv_bps"], "top_processes": snapshot["top_processes"],
+            "agent_version": AGENT_VERSION,
         }
         print("Collected", len(snapshot["interfaces"]), "network interfaces on", snapshot["platform"])
         try:
@@ -207,6 +229,17 @@ def main():
                 raise SystemExit("Could not schedule remote uninstall.")
         except requests.RequestException as exc:
             print("Endpoint telemetry delivery failed:", exc)
+
+        if time.monotonic() - last_logs >= LOG_INTERVAL:
+            last_logs = time.monotonic()
+            logs = collect_logs(since_minutes=10)
+            if logs:
+                post_optional(state, "logs", {"logs": logs})
+        if time.monotonic() - last_discovery >= DISCOVERY_INTERVAL:
+            last_discovery = time.monotonic()
+            hosts = collect_neighbours()
+            if hosts:
+                post_optional(state, "discovery", {"hosts": hosts})
 
         for target in SNMP_TARGETS:
             poll_snmp_target(state, target)

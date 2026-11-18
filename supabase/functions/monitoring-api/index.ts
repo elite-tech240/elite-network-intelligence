@@ -1,17 +1,29 @@
+// deno-lint-ignore-file no-explicit-any
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "npm:@supabase/supabase-js@2.49.1";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SUPABASE_ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY")!;
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+const RESEND_API_KEY = Deno.env.get("RESEND_API_KEY") || "";
+const MAIL_FROM = Deno.env.get("MAIL_FROM") || "Elite Monitoring <onboarding@resend.dev>";
+const TELEGRAM_BOT_TOKEN = Deno.env.get("TELEGRAM_BOT_TOKEN") || "";
+const APP_URL = Deno.env.get("APP_URL") || "https://elite-network-intelligence.vercel.app";
+const API_VERSION = "1.1.0";
+const LATEST_AGENT_VERSION = "0.4.0";
 const admin = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, { auth: { persistSession: false, autoRefreshToken: false } });
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-cron-secret",
   "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
   "Content-Type": "application/json",
 };
+
+class HttpError extends Error {
+  constructor(public status: number, message: string) { super(message); }
+}
+class BlockedTarget extends Error {}
 
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: corsHeaders });
 const fail = (message: string, status = 400) => json({ detail: message }, status);
@@ -24,6 +36,11 @@ function randomToken(bytes = 32): string {
   const data = crypto.getRandomValues(new Uint8Array(bytes));
   return btoa(String.fromCharCode(...data)).replaceAll("+", "-").replaceAll("/", "_").replaceAll("=", "");
 }
+async function readJson(req: Request, maxChars = 512_000): Promise<any> {
+  const text = await req.text();
+  if (text.length > maxChars) throw new HttpError(413, "Payload too large");
+  try { return text ? JSON.parse(text) : {}; } catch { throw new HttpError(400, "Invalid JSON body"); }
+}
 async function signedInUser(req: Request) {
   const auth = req.headers.get("Authorization") || "";
   if (!auth.toLowerCase().startsWith("bearer ")) return null;
@@ -35,20 +52,321 @@ async function signedInUser(req: Request) {
   return error ? null : data.user;
 }
 async function membership(userId: string, organizationId: string) {
+  if (!/^[0-9a-f-]{36}$/i.test(organizationId)) return null;
   const { data } = await admin.from("organization_members").select("role")
     .eq("organization_id", organizationId).eq("user_id", userId).maybeSingle();
   return data;
 }
+async function requireMember(req: Request, organizationId: string, roles: string[]) {
+  const user = await signedInUser(req);
+  if (!user) throw new HttpError(401, "Valid user session required");
+  const member = await membership(user.id, organizationId);
+  if (!member) throw new HttpError(403, "You do not have access to this workspace");
+  if (!roles.includes(member.role)) throw new HttpError(403, "Your role does not allow this action");
+  return { user, role: member.role as string };
+}
+async function agentAuth(req: Request, deviceId: string) {
+  const auth = req.headers.get("Authorization") || "";
+  if (!auth.toLowerCase().startsWith("bearer ")) throw new HttpError(401, "Bearer device token required");
+  const { data: credential } = await admin.from("device_credentials").select("device_id,revoked_at")
+    .eq("device_id", deviceId).eq("token_hash", await hashToken(auth.slice(7).trim())).maybeSingle();
+  if (!credential || credential.revoked_at) throw new HttpError(401, "Invalid or revoked device credential");
+  const { data: device } = await admin.from("devices").select("id,organization_id,site_id,hostname,mac_addresses").eq("id", deviceId).maybeSingle();
+  if (!device) throw new HttpError(404, "Device not found");
+  return device as any;
+}
+async function audit(organizationId: string, actorType: "user" | "agent" | "system", actorUserId: string | null, action: string, resourceType: string, resourceId: string | null, details: Record<string, unknown> = {}, outcome = "success") {
+  try {
+    await admin.from("audit_logs").insert({
+      organization_id: organizationId, actor_user_id: actorUserId, actor_type: actorType, action,
+      resource_type: resourceType, resource_id: resourceId, outcome, details,
+    });
+  } catch { /* auditing must never break the request */ }
+}
+async function platformEvent(level: "info" | "warning" | "error", source: string, message: string, organizationId: string | null = null) {
+  try { await admin.from("platform_events").insert({ organization_id: organizationId, level, source, message: message.slice(0, 500) }); } catch { /* ignore */ }
+}
+async function inMaintenance(organizationId: string, at = new Date()) {
+  const { data } = await admin.from("maintenance_windows").select("id").eq("organization_id", organizationId)
+    .lte("starts_at", at.toISOString()).gte("ends_at", at.toISOString()).limit(1);
+  return Boolean(data?.length);
+}
 
-Deno.serve(async (req: Request) => {
+// ---------------------------------------------------------------------------------------------
+// Outbound target safety (uptime checks and webhooks may only reach public internet hosts)
+// ---------------------------------------------------------------------------------------------
+function isPrivateIPv4(ip: string) {
+  const p = ip.split(".").map(Number);
+  if (p.length !== 4 || p.some((n) => !Number.isInteger(n) || n < 0 || n > 255)) return false;
+  const [a, b] = p;
+  return a === 0 || a === 10 || a === 127 || (a === 169 && b === 254) || (a === 172 && b >= 16 && b <= 31) ||
+    (a === 192 && b === 168) || (a === 100 && b >= 64 && b <= 127) || a >= 224;
+}
+function isPrivateIPv6(ip: string) {
+  const s = ip.toLowerCase();
+  if (s === "::1" || s === "::") return true;
+  if (s.startsWith("::ffff:")) return isPrivateIPv4(s.slice(7));
+  return /^f[cd]/.test(s) || /^fe[89ab]/.test(s);
+}
+async function assertPublicHost(host: string) {
+  const h = host.replace(/^\[|\]$/g, "").toLowerCase();
+  if (!h || h === "localhost" || /\.(localhost|local|internal|lan|home|corp)$/.test(h)) throw new BlockedTarget("Private or local hostnames are not allowed");
+  if (/^\d{1,3}(\.\d{1,3}){3}$/.test(h)) { if (isPrivateIPv4(h)) throw new BlockedTarget("Private IP addresses are not allowed"); return; }
+  if (h.includes(":")) { if (isPrivateIPv6(h)) throw new BlockedTarget("Private IP addresses are not allowed"); return; }
+  let v4: string[] = [], v6: string[] = [];
+  try {
+    [v4, v6] = await Promise.all([
+      Deno.resolveDns(h, "A").catch(() => [] as string[]),
+      Deno.resolveDns(h, "AAAA").catch(() => [] as string[]),
+    ]);
+  } catch { return; /* DNS API unavailable in this runtime: literal checks above still applied */ }
+  if (!v4.length && !v6.length) throw new BlockedTarget("Host did not resolve");
+  if (v4.some(isPrivateIPv4) || v6.some(isPrivateIPv6)) throw new BlockedTarget("Host resolves to a private address");
+}
+
+// ---------------------------------------------------------------------------------------------
+// Notifications
+// ---------------------------------------------------------------------------------------------
+const severityRank: Record<string, number> = { info: 0, warning: 1, critical: 2 };
+type Notice = { title: string; text: string; severity: string; kind: "alert" | "resolved" | "report" | "test"; html?: string };
+
+async function deliver(channel: any, notice: Notice): Promise<{ status: "sent" | "failed" | "skipped"; detail: string }> {
+  try {
+    if (channel.channel_type === "email") {
+      if (!RESEND_API_KEY) return { status: "skipped", detail: "RESEND_API_KEY is not configured" };
+      const to = String(channel.config?.to || "").trim();
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(to)) return { status: "failed", detail: "Invalid email recipient" };
+      const res = await fetch("https://api.resend.com/emails", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${RESEND_API_KEY}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ from: MAIL_FROM, to: [to], subject: notice.title.slice(0, 200), text: notice.text, html: notice.html }),
+        signal: AbortSignal.timeout(10000),
+      });
+      return res.ok ? { status: "sent", detail: "Email accepted" } : { status: "failed", detail: `Resend responded ${res.status}` };
+    }
+    if (channel.channel_type === "telegram") {
+      if (!TELEGRAM_BOT_TOKEN) return { status: "skipped", detail: "TELEGRAM_BOT_TOKEN is not configured" };
+      const chatId = String(channel.config?.chat_id || "").trim();
+      if (!/^-?\d{1,20}$/.test(chatId)) return { status: "failed", detail: "Invalid Telegram chat id" };
+      const res = await fetch(`https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ chat_id: chatId, text: `${notice.title}\n\n${notice.text}`.slice(0, 4000) }),
+        signal: AbortSignal.timeout(10000),
+      });
+      return res.ok ? { status: "sent", detail: "Telegram accepted" } : { status: "failed", detail: `Telegram responded ${res.status}` };
+    }
+    if (channel.channel_type === "webhook") {
+      const target = new URL(String(channel.config?.url || ""));
+      if (target.protocol !== "https:") return { status: "failed", detail: "Webhook URL must use https" };
+      await assertPublicHost(target.hostname);
+      const res = await fetch(target.toString(), {
+        method: "POST", headers: { "Content-Type": "application/json" }, redirect: "manual",
+        body: JSON.stringify({ event: notice.kind, severity: notice.severity, title: notice.title, message: notice.text, text: `${notice.title}\n${notice.text}`, sent_at: new Date().toISOString() }),
+        signal: AbortSignal.timeout(10000),
+      });
+      return res.status < 400 ? { status: "sent", detail: `Webhook responded ${res.status}` } : { status: "failed", detail: `Webhook responded ${res.status}` };
+    }
+    return { status: "failed", detail: "Unknown channel type" };
+  } catch (error) {
+    return { status: "failed", detail: error instanceof BlockedTarget ? error.message : "Delivery error: " + String((error as Error)?.message || error).slice(0, 120) };
+  }
+}
+async function logDelivery(organizationId: string, channelId: string, alertEventId: string | null, kind: string, result: { status: string; detail: string }) {
+  await admin.from("notification_deliveries").insert({ organization_id: organizationId, channel_id: channelId, alert_event_id: alertEventId, kind, status: result.status, detail: result.detail.slice(0, 300) });
+}
+const esc = (s: unknown) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c] as string));
+
+async function dispatchAlertNotifications(): Promise<number> {
+  const since = new Date(Date.now() - 24 * 3600 * 1000).toISOString();
+  const [{ data: fresh }, { data: resolved }] = await Promise.all([
+    admin.from("alert_events").select("id,organization_id,severity,title,message,status").is("notified_at", null).gte("triggered_at", since).order("triggered_at").limit(40),
+    admin.from("alert_events").select("id,organization_id,severity,title,message").eq("status", "resolved").is("resolved_notified_at", null).not("notified_at", "is", null).gte("resolved_at", since).order("resolved_at").limit(40),
+  ]);
+  const items = [
+    ...(fresh || []).map((e: any) => ({ ...e, kind: "alert" as const })),
+    ...(resolved || []).map((e: any) => ({ ...e, kind: "resolved" as const })),
+  ];
+  if (!items.length) return 0;
+  const orgs = [...new Set(items.map((i) => i.organization_id))];
+  const { data: channels } = await admin.from("notification_channels").select("id,organization_id,channel_type,config,min_severity").in("organization_id", orgs).eq("enabled", true);
+  let sent = 0;
+  for (const item of items) {
+    const targets = (channels || []).filter((c: any) => c.organization_id === item.organization_id && severityRank[item.severity] >= severityRank[c.min_severity]);
+    const notice: Notice = item.kind === "alert"
+      ? { kind: "alert", severity: item.severity, title: `[${item.severity.toUpperCase()}] ${item.title}`, text: `${item.message}\n\nOpen the dashboard: ${APP_URL}/alerts` }
+      : { kind: "resolved", severity: item.severity, title: `[RESOLVED] ${item.title}`, text: `This alert has cleared.\n${item.message}\n\n${APP_URL}/alerts` };
+    for (const channel of targets) {
+      const result = await deliver(channel, notice);
+      await logDelivery(item.organization_id, channel.id, item.id, item.kind, result);
+      if (result.status === "sent") sent += 1;
+    }
+    await admin.from("alert_events").update(item.kind === "alert" ? { notified_at: new Date().toISOString() } : { resolved_notified_at: new Date().toISOString() }).eq("id", item.id);
+  }
+  return sent;
+}
+
+// ---------------------------------------------------------------------------------------------
+// Reports
+// ---------------------------------------------------------------------------------------------
+async function buildReport(organizationId: string, days: number) {
+  const to = new Date();
+  const from = new Date(to.getTime() - days * 24 * 3600 * 1000);
+  const { data, error } = await admin.rpc("report_summary", { p_org: organizationId, p_from: from.toISOString(), p_to: to.toISOString() });
+  if (error) throw new Error("Report query failed");
+  return { days, ...data };
+}
+function reportText(orgName: string, r: any) {
+  const lines = [`Weekly monitoring report - ${orgName}`, `Period: ${r.period.from.slice(0, 10)} to ${r.period.to.slice(0, 10)}`, ""];
+  lines.push(`Devices (${r.devices.length}):`);
+  for (const d of r.devices) lines.push(` - ${d.hostname}: availability ${d.availability_percent}% | CPU avg ${d.cpu_avg ?? "-"}% | memory avg ${d.memory_avg ?? "-"}% | disk max ${d.disk_max ?? "-"}%`);
+  lines.push("", `Alerts: ${r.alerts.total} in period, ${r.alerts.open} open now`);
+  for (const t of r.alerts.top) lines.push(` - ${t.title}: ${t.count}`);
+  if (r.uptime_checks.length) {
+    lines.push("", "Uptime checks:");
+    for (const c of r.uptime_checks) lines.push(` - ${c.name}: ${c.availability_percent ?? "no data"}%${c.avg_latency_ms ? ` | ${c.avg_latency_ms} ms avg` : ""}`);
+  }
+  lines.push("", `Full report: ${APP_URL}/reports`);
+  return lines.join("\n");
+}
+function reportHtml(orgName: string, r: any) {
+  const rows = r.devices.map((d: any) => `<tr><td>${esc(d.hostname)}</td><td>${esc(d.availability_percent)}%</td><td>${esc(d.cpu_avg ?? "-")}%</td><td>${esc(d.memory_avg ?? "-")}%</td><td>${esc(d.disk_max ?? "-")}%</td></tr>`).join("");
+  return `<div style="font-family:Arial,sans-serif;max-width:640px"><h2>Weekly monitoring report</h2><p>${esc(orgName)} &middot; ${esc(r.period.from.slice(0, 10))} to ${esc(r.period.to.slice(0, 10))}</p>` +
+    `<table cellpadding="6" style="border-collapse:collapse;width:100%;border:1px solid #ddd"><tr style="background:#f3f5f8"><th align="left">Device</th><th>Availability</th><th>CPU avg</th><th>Memory avg</th><th>Disk max</th></tr>${rows}</table>` +
+    `<p><b>Alerts:</b> ${esc(r.alerts.total)} in period, ${esc(r.alerts.open)} open now.</p><p><a href="${esc(APP_URL)}/reports">Open full report</a></p></div>`;
+}
+async function sendWeeklyReports(): Promise<number> {
+  const now = new Date();
+  if (now.getUTCDay() !== 1 || now.getUTCHours() < 6) return 0;
+  const { data: channels } = await admin.from("notification_channels").select("id,organization_id,channel_type,config").eq("enabled", true).eq("channel_type", "email");
+  let sent = 0;
+  for (const orgId of [...new Set((channels || []).map((c: any) => c.organization_id))]) {
+    const { data: recent } = await admin.from("notification_deliveries").select("id").eq("organization_id", orgId).eq("kind", "report").gte("created_at", new Date(Date.now() - 6 * 24 * 3600 * 1000).toISOString()).limit(1);
+    if (recent?.length) continue;
+    const { data: org } = await admin.from("organizations").select("name").eq("id", orgId).maybeSingle();
+    const report = await buildReport(orgId as string, 7);
+    const orgName = org?.name || "Workspace";
+    for (const channel of (channels || []).filter((c: any) => c.organization_id === orgId)) {
+      const result = await deliver(channel, { kind: "report", severity: "info", title: `Weekly monitoring report - ${orgName}`, text: reportText(orgName, report), html: reportHtml(orgName, report) });
+      await logDelivery(orgId as string, channel.id, null, "report", result);
+      if (result.status === "sent") sent += 1;
+    }
+  }
+  return sent;
+}
+
+// ---------------------------------------------------------------------------------------------
+// Scheduled jobs
+// ---------------------------------------------------------------------------------------------
+async function detectOfflineDevices(): Promise<number> {
+  const { data: rules } = await admin.from("alert_rules").select("id,organization_id,name,threshold").eq("metric", "device_offline").eq("enabled", true);
+  let flagged = 0;
+  for (const rule of rules || []) {
+    const minutes = Number(rule.threshold) > 0 ? Number(rule.threshold) : 5;
+    const cutoff = new Date(Date.now() - minutes * 60000).toISOString();
+    const { data: stale } = await admin.from("devices").select("id,hostname,last_seen_at").eq("organization_id", rule.organization_id).is("archived_at", null).lt("last_seen_at", cutoff).limit(200);
+    if (!stale?.length) continue;
+    const maintenance = await inMaintenance(rule.organization_id);
+    for (const device of stale) {
+      await admin.from("devices").update({ status: "offline" }).eq("id", device.id).neq("status", "offline");
+      if (maintenance) continue;
+      const { data: active } = await admin.from("alert_events").select("id").eq("device_id", device.id).eq("rule_id", rule.id).in("status", ["open", "acknowledged"]).limit(1);
+      if (active?.length) continue;
+      const { error } = await admin.from("alert_events").insert({
+        organization_id: rule.organization_id, device_id: device.id, rule_id: rule.id, source: "offline", severity: "critical",
+        title: `${rule.name}: ${device.hostname}`, message: `No heartbeat for more than ${minutes} minutes (last seen ${device.last_seen_at}).`,
+      });
+      if (!error) flagged += 1;
+    }
+  }
+  return flagged;
+}
+
+async function runCheck(check: any): Promise<{ status: "up" | "down"; latency_ms: number | null; status_code: number | null; error: string | null }> {
+  const started = performance.now();
+  try {
+    if (check.check_type === "http") {
+      const url = new URL(check.target);
+      await assertPublicHost(url.hostname);
+      const res = await fetch(url.toString(), { method: "GET", redirect: "manual", signal: AbortSignal.timeout(check.timeout_ms), headers: { "User-Agent": "EliteMonitoring/1.0" } });
+      await res.body?.cancel();
+      const latency = Math.round(performance.now() - started);
+      return res.status < 400 ? { status: "up", latency_ms: latency, status_code: res.status, error: null } : { status: "down", latency_ms: latency, status_code: res.status, error: `HTTP ${res.status}` };
+    }
+    await assertPublicHost(check.target);
+    const conn = await Promise.race([
+      Deno.connect({ hostname: check.target, port: check.port }),
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error("Connection timed out")), check.timeout_ms)),
+    ]);
+    conn.close();
+    return { status: "up", latency_ms: Math.round(performance.now() - started), status_code: null, error: null };
+  } catch (error) {
+    const message = error instanceof BlockedTarget ? error.message : String((error as Error)?.message || error).slice(0, 200);
+    return { status: "down", latency_ms: null, status_code: null, error: message };
+  }
+}
+async function applyCheckResult(check: any, result: Awaited<ReturnType<typeof runCheck>>) {
+  const now = new Date().toISOString();
+  await admin.from("uptime_results").insert({ organization_id: check.organization_id, check_id: check.id, status: result.status, latency_ms: result.latency_ms, status_code: result.status_code, error: result.error, checked_at: now });
+  const failures = result.status === "down" ? (check.consecutive_failures || 0) + 1 : 0;
+  const nextStatus = result.status === "up" ? "up" : failures >= 2 ? "down" : check.status === "unknown" ? "unknown" : check.status;
+  const changed = nextStatus !== check.status && nextStatus !== "unknown";
+  await admin.from("uptime_checks").update({ consecutive_failures: failures, status: nextStatus, last_checked_at: now, ...(changed ? { last_status_change_at: now } : {}) }).eq("id", check.id);
+  if (nextStatus === "down" && check.status !== "down" && !(await inMaintenance(check.organization_id))) {
+    const { data: active } = await admin.from("alert_events").select("id").eq("uptime_check_id", check.id).in("status", ["open", "acknowledged"]).limit(1);
+    if (!active?.length) {
+      await admin.from("alert_events").insert({ organization_id: check.organization_id, uptime_check_id: check.id, source: "uptime", severity: "critical", title: `${check.name} is down`, message: `${check.check_type.toUpperCase()} check on ${check.target}${check.port ? ":" + check.port : ""} failed: ${result.error ?? "no response"}.` });
+    }
+  }
+  if (result.status === "up") {
+    await admin.from("alert_events").update({ status: "resolved", resolved_at: now }).eq("uptime_check_id", check.id).in("status", ["open", "acknowledged"]);
+  }
+}
+async function runDueChecks(): Promise<number> {
+  const { data: checks } = await admin.from("uptime_checks").select("*").eq("enabled", true).limit(300);
+  const due = (checks || []).filter((c: any) => !c.last_checked_at || Date.now() - new Date(c.last_checked_at).getTime() >= (c.interval_seconds - 5) * 1000);
+  for (let i = 0; i < due.length; i += 20) {
+    await Promise.allSettled(due.slice(i, i + 20).map(async (check: any) => applyCheckResult(check, await runCheck(check))));
+  }
+  return due.length;
+}
+
+async function handleTick(req: Request) {
+  const secret = req.headers.get("x-cron-secret") || "";
+  const { data: valid } = await admin.rpc("check_cron_secret", { p_secret: secret });
+  if (valid !== true) return fail("Forbidden", 403);
+  const started = Date.now();
+  const stats: Record<string, unknown> = {};
+  const errors: string[] = [];
+  const step = async (name: string, fn: () => Promise<number>) => {
+    try { stats[name] = await fn(); } catch (error) { errors.push(`${name}: ${String((error as Error)?.message || error).slice(0, 120)}`); await platformEvent("error", "tick", `${name} failed: ${String((error as Error)?.message || error)}`); }
+  };
+  await Promise.all([step("offline_flagged", detectOfflineDevices), step("uptime_checked", runDueChecks)]);
+  await step("notifications_sent", dispatchAlertNotifications);
+  await step("reports_sent", sendWeeklyReports);
+  const summary = { ...stats, errors, duration_ms: Date.now() - started, ok: errors.length === 0 };
+  await admin.from("platform_state").upsert({ key: "last_tick", value: summary, updated_at: new Date().toISOString() });
+  return json(summary);
+}
+
+// ---------------------------------------------------------------------------------------------
+// Request handling
+// ---------------------------------------------------------------------------------------------
+const uuidPart = "([0-9a-f-]{36})";
+const validLevels = new Set(["critical", "error", "warning", "info", "audit_failure"]);
+const ipv4Pattern = /^(\d{1,3})(\.\d{1,3}){3}$/;
+
+async function handle(req: Request): Promise<Response> {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
-  const path = new URL(req.url).pathname.replace(/^.*\/monitoring-api/, "") || "/";
-  if (req.method === "GET" && path === "/health") return json({ status: "ok", service: "elite-monitoring-api", version: "1.0.0" });
+  const url = new URL(req.url);
+  const path = url.pathname.replace(/^.*\/monitoring-api/, "") || "/";
+  if (req.method === "GET" && path === "/health") return json({ status: "ok", service: "elite-monitoring-api", version: API_VERSION, latest_agent_version: LATEST_AGENT_VERSION });
+
+  if (req.method === "POST" && path === "/jobs/tick") return await handleTick(req);
 
   if (req.method === "POST" && path === "/enrollment-tokens") {
     const user = await signedInUser(req);
     if (!user) return fail("Valid user session required", 401);
-    const body = await req.json();
+    const body = await readJson(req);
     const organizationId = String(body.organization_id || "");
     const siteId = String(body.site_id || "");
     const member = await membership(user.id, organizationId);
@@ -62,11 +380,12 @@ Deno.serve(async (req: Request) => {
       label: String(body.label || "Agent enrollment").slice(0, 100), expires_at: expiresAt,
     });
     if (error) return fail("Could not create enrollment token", 500);
+    await audit(organizationId, "user", user.id, "create", "enrollment_token", null, { site_id: siteId });
     return json({ token, expires_at: expiresAt, site_id: siteId, warning: "Copy this token now. It will not be shown again." });
   }
 
   if (req.method === "POST" && path === "/agents/enroll") {
-    const body = await req.json();
+    const body = await readJson(req);
     const token = String(body.enrollment_token || "");
     const siteId = String(body.site_id || "");
     const hostname = String(body.hostname || "").trim();
@@ -88,6 +407,7 @@ Deno.serve(async (req: Request) => {
       os_version: body.os_version ? String(body.os_version).slice(0, 120) : null,
       ip_address: body.ip_address || null, mac_addresses: Array.isArray(body.mac_addresses) ? body.mac_addresses.slice(0, 16) : [],
       status: "online", last_seen_at: new Date().toISOString(),
+      agent_version: body.agent_version ? String(body.agent_version).slice(0, 40) : null,
     }).select("id,hostname").single();
     if (deviceError || !device) return fail("Device registration failed", 500);
     const { error: credentialError } = await admin.from("device_credentials").insert({ device_id: device.id, token_hash: await hashToken(deviceToken) });
@@ -95,43 +415,51 @@ Deno.serve(async (req: Request) => {
       await admin.from("devices").delete().eq("id", device.id);
       return fail("Could not create device credential", 500);
     }
+    await audit(enrollment.organization_id, "agent", null, "enroll", "device", device.id, { hostname: device.hostname });
     return json({ device, device_token: deviceToken, warning: "Store this device token securely. It is only returned once." });
   }
 
-  const heartbeatMatch = path.match(/^\/agents\/([0-9a-f-]+)\/heartbeat$/i);
+  const heartbeatMatch = path.match(new RegExp(`^/agents/${uuidPart}/heartbeat$`, "i"));
   if (req.method === "POST" && heartbeatMatch) {
     const deviceId = heartbeatMatch[1];
-    const auth = req.headers.get("Authorization") || "";
-    if (!auth.toLowerCase().startsWith("bearer ")) return fail("Bearer device token required", 401);
-    const deviceToken = auth.slice(7).trim();
-    const { data: credential } = await admin.from("device_credentials").select("device_id,revoked_at")
-      .eq("device_id", deviceId).eq("token_hash", await hashToken(deviceToken)).maybeSingle();
-    if (!credential || credential.revoked_at) return fail("Invalid or revoked device credential", 401);
-    const { data: device } = await admin.from("devices").select("id,organization_id,hostname").eq("id", deviceId).maybeSingle();
-    if (!device) return fail("Device not found", 404);
-    const body = await req.json();
+    const device = await agentAuth(req, deviceId);
+    const body = await readJson(req);
     const numeric = (v: unknown) => v == null ? null : Number(v);
     for (const key of ["cpu_percent", "memory_percent", "disk_percent"]) {
       const v = numeric(body[key]);
       if (v !== null && (!Number.isFinite(v) || v < 0 || v > 100)) return fail("Invalid metric value");
     }
+    const rate = (v: unknown) => { const n = numeric(v); return n !== null && Number.isFinite(n) && n >= 0 && n < 1e12 ? n : null; };
+    const uptime = numeric(body.uptime_seconds);
+    const processes = Array.isArray(body.top_processes) ? body.top_processes.slice(0, 10).map((p: any) => ({
+      name: String(p?.name || "unknown").slice(0, 80),
+      cpu: Math.min(100, Math.max(0, Number(p?.cpu) || 0)),
+      memory_mb: Math.min(10_000_000, Math.max(0, Math.round(Number(p?.memory_mb) || 0))),
+    })) : null;
     const now = new Date().toISOString();
-    const metrics = {
+    const metrics: Record<string, any> = {
       organization_id: device.organization_id, device_id: deviceId,
       cpu_percent: numeric(body.cpu_percent), memory_percent: numeric(body.memory_percent),
       disk_percent: numeric(body.disk_percent), bytes_sent: body.bytes_sent == null ? null : String(body.bytes_sent),
       bytes_recv: body.bytes_recv == null ? null : String(body.bytes_recv), recorded_at: now,
+      uptime_seconds: uptime !== null && Number.isFinite(uptime) && uptime >= 0 ? Math.round(uptime) : null,
+      net_sent_bps: rate(body.net_sent_bps), net_recv_bps: rate(body.net_recv_bps), top_processes: processes,
     };
+    const deviceUpdate: Record<string, any> = { status: body.status === "degraded" ? "degraded" : "online", last_seen_at: now, archived_at: null };
+    if (body.agent_version) deviceUpdate.agent_version = String(body.agent_version).slice(0, 40);
     const [{ error: metricError }, { error: deviceError }, { error: credentialUpdateError }] = await Promise.all([
       admin.from("device_metrics").insert(metrics),
-      admin.from("devices").update({ status: body.status === "degraded" ? "degraded" : "online", last_seen_at: now, archived_at: null }).eq("id", deviceId),
+      admin.from("devices").update(deviceUpdate).eq("id", deviceId),
       admin.from("device_credentials").update({ last_used_at: now }).eq("device_id", deviceId),
     ]);
-    if (metricError || deviceError || credentialUpdateError) return fail("Could not persist device telemetry", 500);
+    if (metricError || deviceError || credentialUpdateError) { await platformEvent("error", "heartbeat", "Could not persist device telemetry", device.organization_id); return fail("Could not persist device telemetry", 500); }
+    // The device is reporting again: clear any open offline alert.
+    await admin.from("alert_events").update({ status: "resolved", resolved_at: now }).eq("device_id", deviceId).eq("source", "offline").in("status", ["open", "acknowledged"]);
     const { data: rules } = await admin.from("alert_rules").select("id,name,metric,operator,threshold")
-      .eq("organization_id", device.organization_id).eq("enabled", true);
+      .eq("organization_id", device.organization_id).eq("enabled", true).in("metric", ["cpu_percent", "memory_percent", "disk_percent"]);
+    let maintenance: boolean | null = null;
     for (const rule of rules || []) {
-      const value = metrics[rule.metric as "cpu_percent" | "memory_percent" | "disk_percent"];
+      const value = metrics[rule.metric as string] as number | null;
       if (value == null || rule.threshold == null) continue;
       const breached = rule.operator === "gte" ? value >= rule.threshold : value > rule.threshold;
       if (!breached) {
@@ -142,8 +470,10 @@ Deno.serve(async (req: Request) => {
       const { data: active } = await admin.from("alert_events").select("id").eq("device_id", deviceId)
         .eq("rule_id", rule.id).in("status", ["open", "acknowledged"]).limit(1);
       if (!active?.length) {
+        if (maintenance === null) maintenance = await inMaintenance(device.organization_id);
+        if (maintenance) continue;
         await admin.from("alert_events").insert({
-          organization_id: device.organization_id, device_id: deviceId, rule_id: rule.id,
+          organization_id: device.organization_id, device_id: deviceId, rule_id: rule.id, source: "metric",
           severity: value >= Math.min(100, rule.threshold + 15) ? "critical" : "warning",
           title: rule.name + ": " + device.hostname,
           message: rule.metric + " reached " + value.toFixed(1) + "% (threshold " + rule.threshold + "%).",
@@ -157,20 +487,99 @@ Deno.serve(async (req: Request) => {
         await admin.from("device_credentials").update({ revoked_at: now }).eq("device_id", deviceId).is("revoked_at", null);
       }
     }
-    return json({ ok: true, device_id: deviceId, recorded_at: now, commands: commands || [] });
+    return json({ ok: true, device_id: deviceId, recorded_at: now, commands: commands || [], latest_agent_version: LATEST_AGENT_VERSION });
   }
 
-  const interfacesMatch = path.match(/^\/agents\/([0-9a-f-]+)\/interfaces\/report$/i);
+  const logsMatch = path.match(new RegExp(`^/agents/${uuidPart}/logs$`, "i"));
+  if (req.method === "POST" && logsMatch) {
+    const device = await agentAuth(req, logsMatch[1]);
+    const body = await readJson(req);
+    const items = Array.isArray(body.logs) ? body.logs.slice(0, 100) : [];
+    const nowMs = Date.now();
+    const rows: any[] = [];
+    for (const item of items) {
+      const source = String(item?.source || "").trim().slice(0, 80);
+      const message = String(item?.message || "").trim().slice(0, 2000);
+      const loggedAt = new Date(String(item?.logged_at || ""));
+      if (!source || !message || Number.isNaN(loggedAt.getTime()) || loggedAt.getTime() > nowMs + 5 * 60000 || loggedAt.getTime() < nowMs - 30 * 24 * 3600 * 1000) continue;
+      const eventId = Number.isInteger(Number(item.event_id)) ? Number(item.event_id) : null;
+      const recordId = /^\d{1,19}$/.test(String(item.record_id ?? "")) ? String(item.record_id) : null;
+      rows.push({
+        organization_id: device.organization_id, device_id: device.id, source,
+        level: validLevels.has(item.level) ? item.level : "info", event_id: eventId,
+        provider: item.provider ? String(item.provider).slice(0, 160) : null, message,
+        dedupe_key: (recordId ? `${source}:${recordId}` : `${source}:${eventId ?? 0}:${loggedAt.toISOString()}`).slice(0, 200),
+        logged_at: loggedAt.toISOString(),
+      });
+    }
+    if (rows.length) {
+      const { error } = await admin.from("device_logs").upsert(rows, { onConflict: "device_id,dedupe_key", ignoreDuplicates: true });
+      if (error) { await platformEvent("error", "logs", "Could not store device logs", device.organization_id); return fail("Could not store logs", 500); }
+    }
+    // Repeated failed sign-ins on one device become an alert; it clears once they stop.
+    const windowStart = new Date(nowMs - 10 * 60000).toISOString();
+    const { count } = await admin.from("device_logs").select("id", { count: "exact", head: true }).eq("device_id", device.id).eq("level", "audit_failure").gte("logged_at", windowStart);
+    const { data: openLogAlert } = await admin.from("alert_events").select("id,triggered_at").eq("device_id", device.id).eq("source", "log").in("status", ["open", "acknowledged"]).limit(1);
+    if ((count || 0) >= 5 && !openLogAlert?.length && !(await inMaintenance(device.organization_id))) {
+      await admin.from("alert_events").insert({ organization_id: device.organization_id, device_id: device.id, source: "log", severity: "warning", title: `Repeated failed sign-ins: ${device.hostname}`, message: `${count} failed sign-in attempts in the last 10 minutes.` });
+    } else if ((count || 0) < 5 && openLogAlert?.length && Date.now() - new Date(openLogAlert[0].triggered_at).getTime() > 15 * 60000) {
+      await admin.from("alert_events").update({ status: "resolved", resolved_at: new Date().toISOString() }).eq("id", openLogAlert[0].id);
+    }
+    return json({ ok: true, accepted: rows.length });
+  }
+
+  const discoveryMatch = path.match(new RegExp(`^/agents/${uuidPart}/discovery$`, "i"));
+  if (req.method === "POST" && discoveryMatch) {
+    const device = await agentAuth(req, discoveryMatch[1]);
+    const body = await readJson(req);
+    const seen = new Map<string, string>();
+    for (const host of (Array.isArray(body.hosts) ? body.hosts.slice(0, 256) : [])) {
+      const ip = String(host?.ip || "").trim();
+      const mac = String(host?.mac || "").trim().toLowerCase().replaceAll("-", ":");
+      if (!ipv4Pattern.test(ip) || ip.split(".").some((n) => Number(n) > 255) || ip.endsWith(".255") || ip.startsWith("224.") || ip.startsWith("239.") || ip === "0.0.0.0") continue;
+      if (!/^([0-9a-f]{2}:){5}[0-9a-f]{2}$/.test(mac) || mac === "ff:ff:ff:ff:ff:ff" || mac === "00:00:00:00:00:00" || mac.startsWith("01:00:5e") || mac.startsWith("33:33")) continue;
+      seen.set(mac, ip);
+    }
+    if (!seen.size) return json({ ok: true, accepted: 0, new_hosts: 0 });
+    const siteFilter = { organization_id: device.organization_id, site_id: device.site_id };
+    const [{ count: siteTotal }, { data: existing }, { data: orgDevices }] = await Promise.all([
+      admin.from("discovered_hosts").select("id", { count: "exact", head: true }).match(siteFilter),
+      admin.from("discovered_hosts").select("mac_address,state,first_seen_at").match(siteFilter).in("mac_address", [...seen.keys()]),
+      admin.from("devices").select("id,hostname,mac_addresses").eq("organization_id", device.organization_id),
+    ]);
+    const baseline = (siteTotal || 0) === 0; // first report from a site only establishes what is already there
+    const knownByMac = new Map<string, string>();
+    for (const d of orgDevices || []) for (const m of (d.mac_addresses || [])) knownByMac.set(String(m).toLowerCase().replaceAll("-", ":"), d.id);
+    const existingByMac = new Map((existing || []).map((h: any) => [String(h.mac_address).toLowerCase(), h]));
+    const now = new Date().toISOString();
+    const rows: any[] = [];
+    const fresh: { ip: string; mac: string }[] = [];
+    for (const [mac, ip] of seen) {
+      const prior = existingByMac.get(mac);
+      const matched = knownByMac.get(mac) ?? null;
+      rows.push({
+        ...siteFilter, reported_by_device_id: device.id, device_id: matched, ip_address: ip, mac_address: mac,
+        state: prior ? prior.state : baseline || matched ? "known" : "new",
+        first_seen_at: prior ? prior.first_seen_at : now, last_seen_at: now,
+      });
+      if (!prior && !baseline && !matched) fresh.push({ ip, mac });
+    }
+    const { error } = await admin.from("discovered_hosts").upsert(rows, { onConflict: "organization_id,site_id,mac_address" });
+    if (error) { await platformEvent("error", "discovery", "Could not store discovered hosts", device.organization_id); return fail("Could not store discovery results", 500); }
+    if (fresh.length && !(await inMaintenance(device.organization_id))) {
+      for (const host of fresh.slice(0, 5)) {
+        await admin.from("alert_events").insert({ organization_id: device.organization_id, source: "discovery", severity: "warning", title: `New device on network: ${host.ip}`, message: `A previously unseen device (MAC ${host.mac}) appeared on the network of ${device.hostname}. Review it under Devices > Discovered.` });
+      }
+      if (fresh.length > 5) await admin.from("alert_events").insert({ organization_id: device.organization_id, source: "discovery", severity: "warning", title: `${fresh.length - 5} more new devices on network`, message: `Reported by ${device.hostname}. Review them under Devices > Discovered.` });
+    }
+    return json({ ok: true, accepted: rows.length, new_hosts: fresh.length });
+  }
+
+  const interfacesMatch = path.match(new RegExp(`^/agents/${uuidPart}/interfaces/report$`, "i"));
   if (req.method === "POST" && interfacesMatch) {
     const agentId = interfacesMatch[1];
-    const auth = req.headers.get("Authorization") || "";
-    if (!auth.toLowerCase().startsWith("bearer ")) return fail("Bearer agent token required", 401);
-    const { data: credential } = await admin.from("device_credentials").select("device_id,revoked_at")
-      .eq("device_id", agentId).eq("token_hash", await hashToken(auth.slice(7).trim())).maybeSingle();
-    if (!credential || credential.revoked_at) return fail("Invalid or revoked agent credential", 401);
-    const { data: device } = await admin.from("devices").select("organization_id").eq("id", agentId).maybeSingle();
-    if (!device) return fail("Agent not found", 404);
-    const body = await req.json();
+    const device = await agentAuth(req, agentId);
+    const body = await readJson(req);
     if (!Array.isArray(body.interfaces) || body.interfaces.length > 64) return fail("A maximum of 64 interfaces is accepted");
     const counter = (value: unknown) => /^\d{1,19}$/.test(String(value ?? "")) ? String(value) : null;
     let accepted = 0;
@@ -206,17 +615,11 @@ Deno.serve(async (req: Request) => {
     return json({ ok: true, device_id: agentId, accepted, recorded_at: new Date().toISOString() });
   }
 
-  const snmpMatch = path.match(/^\/agents\/([0-9a-f-]+)\/snmp\/report$/i);
+  const snmpMatch = path.match(new RegExp(`^/agents/${uuidPart}/snmp/report$`, "i"));
   if (req.method === "POST" && snmpMatch) {
     const agentId = snmpMatch[1];
-    const auth = req.headers.get("Authorization") || "";
-    if (!auth.toLowerCase().startsWith("bearer ")) return fail("Bearer agent token required", 401);
-    const { data: credential } = await admin.from("device_credentials").select("device_id,revoked_at")
-      .eq("device_id", agentId).eq("token_hash", await hashToken(auth.slice(7).trim())).maybeSingle();
-    if (!credential || credential.revoked_at) return fail("Invalid or revoked agent credential", 401);
-    const { data: agentDevice } = await admin.from("devices").select("organization_id,site_id").eq("id", agentId).maybeSingle();
-    if (!agentDevice) return fail("Agent not found", 404);
-    const body = await req.json();
+    const agentDevice = await agentAuth(req, agentId);
+    const body = await readJson(req);
     const ip = String(body.ip_address || "");
     if (!ip || ip.length > 64) return fail("A valid SNMP target IP is required");
     const type = body.device_type === "switch" ? "switch" : "router";
@@ -251,13 +654,12 @@ Deno.serve(async (req: Request) => {
     return json({ ok: true, device_id: targetDevice.id, ip_address: ip, recorded_at: now });
   }
 
-
-  const deviceActionMatch = path.match(/^\/devices\/([0-9a-f-]+)\/(archive|restore|uninstall)$/i);
+  const deviceActionMatch = path.match(new RegExp(`^/devices/${uuidPart}/(archive|restore|uninstall)$`, "i"));
   if (req.method === "POST" && deviceActionMatch) {
     const user = await signedInUser(req);
     if (!user) return fail("Valid user session required", 401);
     const deviceId = deviceActionMatch[1], action = deviceActionMatch[2].toLowerCase();
-    const { data: device } = await admin.from("devices").select("id,organization_id,last_seen_at,archived_at,device_type,os_name").eq("id", deviceId).maybeSingle();
+    const { data: device } = await admin.from("devices").select("id,organization_id,hostname,last_seen_at,archived_at,device_type,os_name").eq("id", deviceId).maybeSingle();
     if (!device) return fail("Device not found", 404);
     const member = await membership(user.id, device.organization_id);
     if (!member || !["owner", "admin"].includes(member.role)) return fail("Only owners and admins can manage devices", 403);
@@ -267,12 +669,14 @@ Deno.serve(async (req: Request) => {
       if (online) return fail("Only offline devices can be archived", 409);
       const { error } = await admin.from("devices").update({ archived_at: new Date().toISOString() }).eq("id", deviceId);
       if (error) return fail("Could not archive device", 500);
+      await audit(device.organization_id, "user", user.id, "archive", "device", deviceId, { hostname: device.hostname });
       return json({ ok: true, archived: true, device_id: deviceId });
     }
     if (action === "restore") {
       if (!device.archived_at) return fail("Device is not archived", 409);
       const { error } = await admin.from("devices").update({ archived_at: null }).eq("id", deviceId);
       if (error) return fail("Could not restore device", 500);
+      await audit(device.organization_id, "user", user.id, "restore", "device", deviceId, { hostname: device.hostname });
       return json({ ok: true, archived: false, device_id: deviceId });
     }
     if (device.archived_at) return fail("Restore the device before uninstalling its agent", 409);
@@ -282,15 +686,16 @@ Deno.serve(async (req: Request) => {
     if (pending?.length) return fail("An uninstall command is already pending", 409);
     const { error } = await admin.from("pending_agent_commands").insert({ device_id: deviceId, command: "uninstall", requested_by: user.id });
     if (error) return fail("Could not queue uninstall command", 500);
+    await audit(device.organization_id, "user", user.id, "uninstall_requested", "device", deviceId, { hostname: device.hostname });
     return json({ ok: true, device_id: deviceId, command: "uninstall", status: "queued" }, 202);
   }
 
-  const revokeMatch = path.match(/^\/devices\/([0-9a-f-]+)\/revoke$/i);
+  const revokeMatch = path.match(new RegExp(`^/devices/${uuidPart}/revoke$`, "i"));
   if (req.method === "POST" && revokeMatch) {
     const user = await signedInUser(req);
     if (!user) return fail("Valid user session required", 401);
     const deviceId = revokeMatch[1];
-    const { data: device } = await admin.from("devices").select("id,organization_id").eq("id", deviceId).maybeSingle();
+    const { data: device } = await admin.from("devices").select("id,organization_id,hostname").eq("id", deviceId).maybeSingle();
     if (!device) return fail("Device not found", 404);
     const member = await membership(user.id, device.organization_id);
     if (!member || !["owner", "admin"].includes(member.role)) return fail("Only owners and admins can revoke device credentials", 403);
@@ -298,13 +703,14 @@ Deno.serve(async (req: Request) => {
     const { error } = await admin.from("device_credentials").update({ revoked_at: now }).eq("device_id", deviceId);
     if (error) return fail("Could not revoke device credential", 500);
     await admin.from("devices").update({ status: "offline" }).eq("id", deviceId);
+    await audit(device.organization_id, "user", user.id, "revoke_credential", "device", deviceId, { hostname: device.hostname });
     return json({ ok: true, device_id: deviceId, revoked_at: now });
   }
 
   if (req.method === "POST" && path === "/team/invite") {
     const user = await signedInUser(req);
     if (!user) return fail("Valid user session required", 401);
-    const body = await req.json();
+    const body = await readJson(req);
     const organizationId = String(body.organization_id || "");
     const email = String(body.email || "").trim().toLowerCase();
     const role = String(body.role || "viewer");
@@ -319,8 +725,62 @@ Deno.serve(async (req: Request) => {
       organization_id: organizationId, user_id: inviteData.user.id, role,
     });
     if (memberError) return fail("Invitation sent, but workspace membership could not be assigned. Contact the owner.", 500);
+    await audit(organizationId, "user", user.id, "invite_member", "organization_member", inviteData.user.id, { role });
     return json({ ok: true, email, role });
   }
 
+  // ---- Monitoring features used by the dashboard --------------------------------------------
+  if (req.method === "POST" && path === "/uptime-checks/run") {
+    const body = await readJson(req);
+    const { data: check } = await admin.from("uptime_checks").select("*").eq("id", String(body.check_id || "")).maybeSingle();
+    if (!check) return fail("Check not found", 404);
+    await requireMember(req, check.organization_id, ["owner", "admin", "operator"]);
+    const result = await runCheck(check);
+    await applyCheckResult(check, result);
+    return json({ ok: true, ...result });
+  }
+
+  if (req.method === "POST" && path === "/notification-channels/test") {
+    const body = await readJson(req);
+    const { data: channel } = await admin.from("notification_channels").select("id,organization_id,channel_type,config").eq("id", String(body.channel_id || "")).maybeSingle();
+    if (!channel) return fail("Channel not found", 404);
+    const { user } = await requireMember(req, channel.organization_id, ["owner", "admin"]);
+    const result = await deliver(channel, { kind: "test", severity: "info", title: "[TEST] Elite Network Intelligence notification", text: "This is a test notification. If you can read it, this channel works." });
+    await logDelivery(channel.organization_id, channel.id, null, "test", result);
+    await audit(channel.organization_id, "user", user.id, "test_notification", "notification_channel", channel.id, { status: result.status });
+    return json({ ok: result.status === "sent", ...result }, result.status === "failed" ? 502 : 200);
+  }
+
+  if (req.method === "GET" && path === "/reports/summary") {
+    const organizationId = url.searchParams.get("organization_id") || "";
+    const days = Math.min(90, Math.max(1, Number(url.searchParams.get("days")) || 7));
+    await requireMember(req, organizationId, ["owner", "admin", "operator", "viewer"]);
+    return json(await buildReport(organizationId, days));
+  }
+
+  if (req.method === "GET" && path === "/platform/status") {
+    const organizationId = url.searchParams.get("organization_id") || "";
+    await requireMember(req, organizationId, ["owner", "admin"]);
+    const [{ data: overview, error }, { data: events }, { data: deliveries }] = await Promise.all([
+      admin.rpc("platform_overview", { p_org: organizationId }),
+      admin.from("platform_events").select("id,level,source,message,created_at").eq("organization_id", organizationId).order("created_at", { ascending: false }).limit(20),
+      admin.from("notification_deliveries").select("status").eq("organization_id", organizationId).gte("created_at", new Date(Date.now() - 7 * 24 * 3600 * 1000).toISOString()),
+    ]);
+    if (error) return fail("Could not read platform status", 500);
+    const tally: Record<string, number> = { sent: 0, failed: 0, skipped: 0 };
+    for (const d of deliveries || []) tally[d.status] = (tally[d.status] || 0) + 1;
+    return json({ ...overview, api_version: API_VERSION, latest_agent_version: LATEST_AGENT_VERSION, events: events || [], notifications_7d: tally, integrations: { email: Boolean(RESEND_API_KEY), telegram: Boolean(TELEGRAM_BOT_TOKEN) } });
+  }
+
   return fail("Route not found", 404);
+}
+
+Deno.serve(async (req: Request) => {
+  try {
+    return await handle(req);
+  } catch (error) {
+    if (error instanceof HttpError) return fail(error.message, error.status);
+    await platformEvent("error", "api", `Unhandled error: ${String((error as Error)?.message || error)}`);
+    return fail("Unexpected server error", 500);
+  }
 });
