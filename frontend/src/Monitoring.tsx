@@ -16,7 +16,7 @@ const Empty = ({ cols, text }: { cols: number; text: string }) => <tr><td colSpa
 /* ------------------------------------------------------------------ Logs */
 export function LogsPage({ organizationId, devices }: { organizationId: string; devices: Dev[] }) {
   const [rows, setRows] = useState<any[]>([]); const [device, setDevice] = useState('all'); const [level, setLevel] = useState('all');
-  const [range, setRange] = useState('24'); const [q, setQ] = useState(''); const [live, setLive] = useState(true); const [err, setErr] = useState('');
+  const [range, setRange] = useState('24'); const [q, setQ] = useState(''); const [err, setErr] = useState('');
   const load = useCallback(async () => {
     if (!supabase) return;
     let query = supabase.from('device_logs').select('id,device_id,source,level,event_id,provider,message,logged_at').eq('organization_id', organizationId)
@@ -26,10 +26,10 @@ export function LogsPage({ organizationId, devices }: { organizationId: string; 
     if (q.trim()) query = query.ilike('message', `%${q.trim().replace(/[%,]/g, '')}%`);
     const { data, error } = await query; if (error) setErr(error.message); else { setErr(''); setRows(data ?? []); }
   }, [organizationId, device, level, range, q]);
-  useTick(() => { if (live) void load(); }, 15000, [load, live]);
+  useTick(() => { void load(); }, 15000, [load]);
   const name = (id: string) => devices.find(d => d.id === id)?.hostname ?? id.slice(0, 8);
   return <div className="sites-workspace">
-    <section className="panel page-panel"><div className="panel-head"><div><h3>Device logs</h3><p>Warnings, errors and failed sign-ins collected read-only from each device (kept 30 days).</p></div><label className="inline-check"><input type="checkbox" checked={live} onChange={e => setLive(e.target.checked)}/> Live</label></div>
+    <section className="panel page-panel"><div className="panel-head"><div><h3>Device logs</h3><p>Warnings, errors and failed sign-ins collected read-only from each device (kept 30 days).</p></div></div>
       <div className="filter-bar">
         <select className="filter-select" value={device} onChange={e => setDevice(e.target.value)}><option value="all">All devices</option>{devices.map(d => <option key={d.id} value={d.id}>{d.hostname}</option>)}</select>
         <select className="filter-select" value={level} onChange={e => setLevel(e.target.value)}><option value="all">All levels</option><option value="critical">Critical</option><option value="error">Error</option><option value="warning">Warning</option><option value="audit_failure">Failed sign-in</option><option value="info">Info</option></select>

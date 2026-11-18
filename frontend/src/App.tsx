@@ -1,4 +1,4 @@
-import { FormEvent, useCallback, useEffect, useMemo, useState } from 'react';
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Activity, Bell, Boxes, Cable, ChevronDown, CircleHelp, LayoutDashboard, LogOut, Network, Search, Settings, ShieldCheck, Wifi, ScrollText, Globe2, FileBarChart, ClipboardList, Gauge, MonitorUp, Zap, LockKeyhole, Eye, EyeOff, MapPin, Server, ArrowUpRight, UserRound, KeyRound } from 'lucide-react';
 import type { Session, User } from '@supabase/supabase-js';
 
@@ -48,9 +48,11 @@ export default function App() {
     return () => listener.subscription.unsubscribe();
   }, []);
 
+  const loaded = useRef(false);
   const loadWorkspace = useCallback(async (user: User) => {
     if (!supabase) return;
-    setDataLoading(true); setDataError('');
+    if (!loaded.current) setDataLoading(true);
+    setDataError('');
     try {
       const { data: member, error: memberError } = await supabase.from('organization_members').select('organization_id,role,organizations(id,name)').eq('user_id', user.id).limit(1).maybeSingle();
       if (memberError) throw memberError;
@@ -68,10 +70,10 @@ export default function App() {
       if (networkResult.error) throw networkResult.error;
       setDevices(((deviceResult.data ?? []) as Device[]).filter(d => !d.archived_at)); setArchivedDevices(((deviceResult.data ?? []) as Device[]).filter(d => Boolean(d.archived_at))); setSites((siteResult.data ?? []) as Site[]); setNetworks((networkResult.data ?? []) as Net[]);
     } catch (e) { setDataError(e instanceof Error ? e.message : 'Could not load workspace data.'); }
-    finally { setDataLoading(false); }
+    finally { loaded.current = true; setDataLoading(false); }
   }, []);
 
-  useEffect(() => { if (session?.user) void loadWorkspace(session.user); else { setMembership(null); setDevices([]); setArchivedDevices([]); setSites([]); setNetworks([]); } }, [session?.user?.id, loadWorkspace]);
+  useEffect(() => { if (session?.user) void loadWorkspace(session.user); else { loaded.current = false; setMembership(null); setDevices([]); setArchivedDevices([]); setSites([]); setNetworks([]); } }, [session?.user?.id, loadWorkspace]);
 
   useEffect(() => {
     if (!supabase || !session?.user || !membership?.organization_id) return;
@@ -149,7 +151,7 @@ function Overview({devices,sites,networks,online,loading,go}:{devices:Device[];s
  const workstation=devices.filter(d=>d.device_type==='workstation').length;
  const recent=devices.slice(0,6);
  return <div className="overview-v2">
-  <div className="overview-toolbar"><div><span className="overview-kicker">LIVE INFRASTRUCTURE</span><h2>Network operations</h2><p>Real-time snapshot of your managed environment</p></div><div className="overview-live"><i/> Live inventory</div></div>
+  <div className="overview-toolbar"><div><span className="overview-kicker">LIVE INFRASTRUCTURE</span><h2>Network operations</h2><p>Real-time snapshot of your managed environment</p></div></div>
   <div className="overview-kpis">
    <article className="overview-kpi kpi-total"><div className="kpi-heading"><span>Total devices</span><span className="kpi-symbol"><Boxes size={17}/></span></div><strong>{loading?'—':devices.length}</strong><small>Registered endpoints</small><div className="kpi-bottom"><span>Inventory</span><button onClick={()=>go('Devices')}>View devices <ArrowUpRight size={13}/></button></div></article>
    <article className="overview-kpi kpi-online"><div className="kpi-heading"><span>Online devices</span><span className="kpi-symbol"><Wifi size={17}/></span></div><strong>{loading?'—':online}</strong><small>Currently reporting</small><div className="kpi-bottom"><span className="kpi-good"><i/> Operational</span><button onClick={()=>go('Devices')}>View status <ArrowUpRight size={13}/></button></div></article>
