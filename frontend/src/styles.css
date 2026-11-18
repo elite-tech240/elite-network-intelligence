@@ -69,7 +69,7 @@ body{background:var(--canvas);color:var(--text)}
   border-right:1px solid #282829;
 }
 .brand{padding-bottom:27px}
-.brand-mark{background:linear-gradient(145deg,#ff7a27,#d94808);box-shadow:0 5px 22px #f5630f30;overflow:hidden}.brand-mark img{width:100%;height:100%;display:block}
+.brand-mark{background:none!important;border:0!important;border-radius:0!important;box-shadow:none!important;overflow:visible}.brand-mark img{width:100%;height:100%;display:block;object-fit:contain}
 .brand b{color:#f5f5f5;letter-spacing:1.8px}
 .brand span{color:#858b8e}
 .workspace{background:#151516;border-color:#2e2e2f;border-radius:8px}
@@ -187,7 +187,7 @@ tr:hover td{background:#1e1e1f}
 .footer b{color:#a3abad}
 .auth-screen{background:radial-gradient(ellipse at 50% 0%,#2a1b13 0%,#0a0c0d 58%)}
 .auth-card{background:#141415;border-color:#35302b;box-shadow:0 24px 90px #0009}
-.auth-mark{background:linear-gradient(145deg,#ff7a27,#d94808)}
+.auth-mark{background:none!important;border:0!important;box-shadow:none!important}
 .auth-kicker{color:#ff995c}
 .auth-card h1{color:#f3f4f4}
 .auth-subtitle{color:#9ca5a8}
