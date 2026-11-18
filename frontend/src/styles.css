@@ -607,3 +607,10 @@ small,.muted{font-size:var(--fs-sm)}
 .noc-embed-grid .noc2-tile{padding:12px 14px}
 .noc-embed-alerts{display:grid;gap:10px;padding:16px 18px}
 @media(max-width:900px){.noc-page .noc2-stats{grid-template-columns:repeat(2,1fr)}}
+.danger-card{border-color:#4a2129!important}
+.settings-icon.danger,.modal-icon.danger{background:#e5484d1f!important;color:#ff9aa0!important}
+.danger-card .danger-action{margin-top:18px}
+.modal .field b{color:#f1f4f8;font-weight:600}
+
+.primary-action,.secondary-action,.danger-action,.danger-solid{display:inline-flex;align-items:center;justify-content:center;gap:8px}
+.modal .field>span{display:block}

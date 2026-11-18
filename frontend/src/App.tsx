@@ -1,5 +1,5 @@
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Activity, Bell, Boxes, Cable, ChevronDown, CircleHelp, LayoutDashboard, LogOut, Network, Search, Settings, ShieldCheck, Wifi, ScrollText, Globe2, FileBarChart, ClipboardList, Gauge, MonitorUp, Zap, LockKeyhole, Eye, EyeOff, MapPin, Server, ArrowUpRight, UserRound, KeyRound, Sun, Moon, Languages, MoreHorizontal, Building2, Check, Plus } from 'lucide-react';
+import { Activity, Bell, Boxes, Cable, ChevronDown, CircleHelp, LayoutDashboard, LogOut, Network, Search, Settings, ShieldCheck, Wifi, ScrollText, Globe2, FileBarChart, ClipboardList, Gauge, MonitorUp, Zap, LockKeyhole, Eye, EyeOff, MapPin, Server, ArrowUpRight, UserRound, KeyRound, Sun, Moon, Languages, MoreHorizontal, Building2, Check, Plus, Trash2 } from 'lucide-react';
 import type { Session, User } from '@supabase/supabase-js';
 
 type Device = { id: string; hostname: string; ip_address: string | null; status: string; device_type: string | null; last_seen_at: string | null; site_id?: string; archived_at?: string | null };
@@ -29,6 +29,7 @@ export default function App() {
   const [memberships, setMemberships] = useState<Membership[]>([]);
   const activeOrgRef = useRef<string>('');
   const [newWs, setNewWs] = useState(false); const [wsName, setWsName] = useState(''); const [wsBusy, setWsBusy] = useState(false);
+  const [delWs, setDelWs] = useState(false); const [delName, setDelName] = useState('');
   const [devices, setDevices] = useState<Device[]>([]);
   const [archivedDevices, setArchivedDevices] = useState<Device[]>([]);
   const [sites, setSites] = useState<Site[]>([]);
@@ -60,6 +61,17 @@ export default function App() {
       activeOrgRef.current = newId as string; setWsName(''); setNewWs(false); setWsOpen(false);
       await loadWorkspace(session.user); setPage('Overview'); toast('Workspace created');
     } catch (err: any) { toast(err?.message ?? 'Could not create the workspace'); }
+    finally { setWsBusy(false); }
+  };
+  const deleteWs = async (e: FormEvent) => {
+    e.preventDefault(); if (!supabase || !session?.user || !membership) return;
+    setWsBusy(true);
+    try {
+      const { error } = await supabase.rpc('delete_organization', { p_id: membership.organization_id, p_name: delName.trim() });
+      if (error) throw error;
+      activeOrgRef.current = ''; setDelName(''); setDelWs(false); setPage('Overview');
+      await loadWorkspace(session.user); toast('Workspace deleted');
+    } catch (err: any) { toast(err?.message ?? 'Could not delete the workspace'); }
     finally { setWsBusy(false); }
   };
   const orgRaw: any = membership?.organizations; const orgName: string = (Array.isArray(orgRaw) ? orgRaw[0]?.name : orgRaw?.name) ?? 'Workspace';
@@ -172,7 +184,7 @@ export default function App() {
           {page === 'Audit log' && <AuditPage organizationId={membership.organization_id}/>}
           {page === 'Platform' && ['owner','admin'].includes(membership.role) && <PlatformPage organizationId={membership.organization_id} token={session.access_token}/>}
           {page === 'Sites & Networks' && <SitesPage key={'t'+pageTab} initialTab={pageTab} sites={sites} networks={networks} organizationId={membership.organization_id} role={membership.role} accessToken={session.access_token} onRefresh={refresh}/>}
-          {page === 'Settings' && <SettingsPage key={'s'+pageTab} initialTab={pageTab} user={session.user} membership={membership} accessToken={session.access_token} onSignOut={signOut}/>}
+          {page === 'Settings' && <SettingsPage key={'s'+pageTab} initialTab={pageTab} user={session.user} membership={membership} accessToken={session.access_token} onSignOut={signOut} orgName={orgName} onDeleteWorkspace={() => setDelWs(true)}/>}
         </>}
         {newWs && <div className="modal-back" onClick={() => !wsBusy && setNewWs(false)}><div className="modal" role="dialog" aria-modal="true" aria-label="Create workspace" onClick={e => e.stopPropagation()}>
           <div className="modal-icon"><Building2 size={21}/></div>
@@ -182,6 +194,14 @@ export default function App() {
             <label className="field">Workspace name<input autoFocus value={wsName} maxLength={80} onChange={e => setWsName(e.target.value)} placeholder="Acme Head Office"/></label>
             <ol className="ws-steps"><li>You join it as <b>owner</b>.</li><li>Add a site and a network.</li><li>Install the agent to start collecting data.</li></ol>
             <div className="modal-actions"><button type="button" className="secondary-action" onClick={() => setNewWs(false)} disabled={wsBusy}>Cancel</button><button className="primary-action" disabled={wsBusy || !wsName.trim()}>{wsBusy ? 'Creating…' : 'Create workspace'}</button></div>
+          </form></div></div>}
+        {delWs && membership && <div className="modal-back" onClick={() => !wsBusy && setDelWs(false)}><div className="modal" role="dialog" aria-modal="true" aria-label="Delete workspace" onClick={e => e.stopPropagation()}>
+          <div className="modal-icon danger"><Trash2 size={21}/></div>
+          <h3>Delete {orgName}?</h3>
+          <p className="modal-text">Every site, network, device, metric, alert, uptime check and member in this workspace is deleted with it. This cannot be undone.</p>
+          <form onSubmit={deleteWs}>
+            <label className="field"><span>Type <b>{orgName}</b> to confirm</span><input autoFocus value={delName} onChange={e => setDelName(e.target.value)} placeholder={orgName}/></label>
+            <div className="modal-actions"><button type="button" className="secondary-action" onClick={() => setDelWs(false)} disabled={wsBusy}>Cancel</button><button className="danger-solid" disabled={wsBusy || delName.trim() !== orgName}>{wsBusy ? 'Deleting…' : 'Delete workspace'}</button></div>
           </form></div></div>}
         {noc && membership && <NocWall devices={devices} organizationId={membership.organization_id} onClose={() => setNoc(false)}/>}
         <div className="footer"><span>ELITE NETWORK INTELLIGENCE <b>v0.4.0</b></span><span>Secure workspace · {membership?.role ?? 'No role'}</span></div>
@@ -323,11 +343,12 @@ function SitesPage({initialTab,sites,networks,organizationId,role,accessToken,on
  {tab==='agents'&&<AgentInstaller sites={sites} organizationId={organizationId} accessToken={accessToken} canManage={canManage}/>}
  {!canManage&&<p className="muted">Your role is read-only for infrastructure setup.</p>}</div>;
 }
-function SettingsPage({initialTab,user,membership,accessToken,onSignOut}:{initialTab?:string;user:User;membership:Membership;accessToken:string;onSignOut:()=>void}) {
+function SettingsPage({initialTab,user,membership,accessToken,onSignOut,orgName,onDeleteWorkspace}:{initialTab?:string;user:User;membership:Membership;accessToken:string;onSignOut:()=>void;orgName:string;onDeleteWorkspace:()=>void}) {
  const [tab,setTab]=useState(initialTab||'account');const isOwner=membership.role==='owner';
  return <div className="sites-workspace"><PageTabs items={[{id:'account',label:'Account'},{id:'workspace',label:'Workspace access'},{id:'team',label:'Team management'},{id:'notify',label:'Notifications'},{id:'maint',label:'Maintenance'}]} active={tab} onChange={setTab}/>
  {tab==='account'&&<section className="panel settings-card"><div className="settings-icon"><UserRound size={19}/></div><h3>Account</h3><p>Signed-in identity and authentication status.</p><div className="setting-row"><span>Email</span><b>{user.email}</b></div><div className="setting-row"><span>User ID</span><code>{user.id.slice(0,8)}…</code></div><div className="setting-row"><span>Email verified</span><b>{user.email_confirmed_at?'Verified':'Pending'}</b></div><button className="secondary-action" onClick={onSignOut}><LogOut size={15}/> Sign out</button></section>}
- {tab==='workspace'&&<section className="panel settings-card"><div className="settings-icon"><KeyRound size={19}/></div><h3>Workspace permissions</h3><p>Role-based access is enforced by the database and trusted API.</p><div className="setting-row"><span>Organization</span><b>{membership.organizations?.[0]?.name??membership.organization_id}</b></div><div className="setting-row"><span>Your role</span><span className={isOwner?'role-badge owner':'role-badge'}>{membership.role}</span></div>{isOwner?<div className="owner-note"><ShieldCheck size={17}/><span><b>System owner</b><small>You can invite teammates and control workspace access.</small></span></div>:<div className="notice-banner">Owner-only controls are hidden from this account.</div>}</section>}
+ {tab==='workspace'&&<><section className="panel settings-card"><div className="settings-icon"><KeyRound size={19}/></div><h3>Workspace permissions</h3><p>Role-based access is enforced by the database and trusted API.</p><div className="setting-row"><span>Organization</span><b>{membership.organizations?.[0]?.name??membership.organization_id}</b></div><div className="setting-row"><span>Your role</span><span className={isOwner?'role-badge owner':'role-badge'}>{membership.role}</span></div>{isOwner?<div className="owner-note"><ShieldCheck size={17}/><span><b>System owner</b><small>You can invite teammates and control workspace access.</small></span></div>:<div className="notice-banner">Owner-only controls are hidden from this account.</div>}</section>
+  {isOwner&&<section className="panel settings-card danger-card"><div className="settings-icon danger"><Trash2 size={19}/></div><h3>Delete this workspace</h3><p>Removes {orgName} with every site, network, device, metric, alert and member in it. This cannot be undone.</p><button className="danger-action" onClick={onDeleteWorkspace}><Trash2 size={15}/>Delete workspace</button></section>}</>}
  {tab==='notify'&&<ChannelsPanel organizationId={membership.organization_id} role={membership.role} token={accessToken}/>}
  {tab==='maint'&&<MaintenancePanel organizationId={membership.organization_id} role={membership.role}/>}
  {tab==='team'&&<TeamInvite organizationId={membership.organization_id} role={membership.role} accessToken={accessToken}/>}
