@@ -12,6 +12,10 @@ on:
       - 'agent/**'
       - 'frontend/**'
       - '.github/workflows/build-windows-agent-installer.yml'
+  pull_request:
+    paths:
+      - 'agent/**'
+      - '.github/workflows/build-windows-agent-installer.yml'
   workflow_dispatch:
 
 permissions:
@@ -110,6 +114,7 @@ jobs:
           name: EliteNetworkAgent-Windows-Installer
           path: release-assets
       - name: Publish installer release
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: agent-installer-v0.3.1
