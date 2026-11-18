@@ -1,5 +1,5 @@
 import { Children, ReactNode, isValidElement, useEffect, useMemo, useRef, useState } from 'react';
-import { AlertTriangle, ArrowDown, ArrowUp, Check, CheckCircle2, ChevronDown, Circle, Search, X } from 'lucide-react';
+import { AlertTriangle, ArrowDown, ArrowUp, Check, ChevronDown, Circle, Search, X } from 'lucide-react';
 
 /* ---------- preferences (theme, language, density, onboarding) ---------- */
 export type Prefs = { theme: 'dark' | 'light'; lang: 'en' | 'ar'; dense: boolean; onboardDone: boolean };
@@ -159,7 +159,7 @@ export type Step = { id: string; label: string; done: boolean; go: () => void };
 export function Checklist({ steps, onDismiss, lang }: { steps: Step[]; onDismiss: () => void; lang: Prefs['lang'] }) {
   const done = steps.filter(s => s.done).length;
   if (done === steps.length) return null;
-  return <section className="panel onboarding"><div className="onboarding-head"><div><span className="overview-kicker">{tr(lang, 'Getting started').toUpperCase()}</span><h3>{done} / {steps.length}</h3></div><button className="text-button" onClick={onDismiss}>{tr(lang, 'Dismiss')}</button></div>
-    <div className="onboarding-bar"><i style={{ width: `${(done / steps.length) * 100}%` }}/></div>
-    <ul>{steps.map(s => <li key={s.id} className={s.done ? 'done' : ''}><button onClick={s.go} disabled={s.done}>{s.done ? <CheckCircle2 size={17}/> : <Circle size={17}/>}<span>{s.label}</span></button></li>)}</ul></section>;
+  const todo = steps.filter(s => !s.done);
+  return <section className="panel onboarding"><div className="onboarding-top"><div><b>{tr(lang, 'Getting started')}</b><span>{done} / {steps.length}</span></div><div className="onboarding-bar"><i style={{ width: `${(done / steps.length) * 100}%` }}/></div><button className="text-button" onClick={onDismiss}>{tr(lang, 'Dismiss')}</button></div>
+    <div className="onboarding-steps">{todo.map(s => <button key={s.id} className="chip-step" onClick={s.go}><Circle size={15}/>{s.label}</button>)}</div></section>;
 }

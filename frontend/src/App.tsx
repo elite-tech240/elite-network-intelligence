@@ -9,7 +9,7 @@ type Membership = { organization_id: string; role: 'owner' | 'admin' | 'operator
 import { supabase, configured, apiUrl, fmtBps } from './lib';
 import { AgentInstaller } from './AgentInstaller';
 import { Toaster, ConfirmHost, Flash, confirmDialog, usePrefs, tr, CommandPalette, Drawer, Skeleton, EmptyState, useTable, Th, Pager, Checklist, Select, type Command, type Prefs } from './ui';
-import { Sparkline } from './Chart';
+import { LineChart, type Point } from './Chart';
 import { LogsPage, UptimePage, ReportsPage, AuditPage, PlatformPage, ChannelsPanel, MaintenancePanel, DiscoveryPanel, DeviceDetail, NocWall } from './Monitoring';
 const nav = [
   { label: 'Overview', icon: LayoutDashboard, path: '/' }, { label: 'Devices', icon: Boxes, path: '/devices' },
@@ -44,6 +44,9 @@ export default function App() {
   const [prefs, setPrefs] = usePrefs();
   const [palette, setPalette] = useState(false);
   const lang = prefs.lang;
+  const [wsOpen, setWsOpen] = useState(false); const wsRef = useRef<HTMLDivElement>(null);
+  useEffect(() => { if (!wsOpen) return; const off = (e: MouseEvent) => { if (!wsRef.current?.contains(e.target as Node)) setWsOpen(false); }; document.addEventListener('mousedown', off); return () => document.removeEventListener('mousedown', off); }, [wsOpen]);
+  const orgRaw: any = membership?.organizations; const orgName: string = (Array.isArray(orgRaw) ? orgRaw[0]?.name : orgRaw?.name) ?? 'Workspace';
   useEffect(() => { const k = (e: KeyboardEvent) => { if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); setPalette(p => !p); } }; window.addEventListener('keydown', k); return () => window.removeEventListener('keydown', k); }, []);
 
   useEffect(() => {
@@ -116,7 +119,12 @@ export default function App() {
   return <div className="shell">
     <aside className="sidebar">
       <div className="brand"><div className="brand-mark"><img src="/elite-network-mark.svg" alt="" /></div><div><b>ELITE</b><span>NETWORK INTELLIGENCE</span></div></div>
-      <div className="workspace"><div className="workspace-icon">EN</div><div><b>{membership?.organizations?.[0]?.name ?? 'Workspace'}</b><small>{membership ? `${membership.role} access` : 'No organization access'}</small></div><ChevronDown size={15}/></div>
+      <div className="workspace-wrap" ref={wsRef}><button className="workspace" aria-haspopup="menu" aria-expanded={wsOpen} onClick={() => setWsOpen(o => !o)}><div className="workspace-icon">{orgName.slice(0, 2).toUpperCase()}</div><div><b>{orgName}</b><small>{membership ? `${membership.role} access` : 'No organization access'}</small></div><ChevronDown size={15}/></button>
+        {wsOpen && <div className="ws-menu" role="menu"><div className="ws-menu-label">Add to workspace</div>
+          <button role="menuitem" onClick={() => { setWsOpen(false); go('Sites & Networks', 'agents'); }}><MonitorUp size={16}/>Install an agent</button>
+          <button role="menuitem" onClick={() => { setWsOpen(false); go('Sites & Networks', 'sites'); }}><MapPin size={16}/>Add a site</button>
+          <button role="menuitem" onClick={() => { setWsOpen(false); go('Uptime'); }}><Globe2 size={16}/>Add an uptime check</button>
+          <button role="menuitem" onClick={() => { setWsOpen(false); go('Settings', 'team'); }}><UserRound size={16}/>Invite a teammate</button></div>}</div>
       <nav>{[['MONITOR', ['Overview','Devices','Topology','Traffic','Alerts','Logs','Uptime']], ['INSIGHTS', ['Reports','Audit log']], ['MANAGE', ['Sites & Networks', ...(membership && ['owner','admin'].includes(membership.role) ? ['Platform'] : [])]]].map(([group, labels]) => <div key={group as string}><div className="nav-label">{tr(lang, group as string)}</div>{[...nav, adminNav].filter(i => (labels as string[]).includes(i.label)).map(item => <button key={item.label} className={page === item.label ? 'nav-item selected' : 'nav-item'} onClick={() => go(item.label)}><item.icon size={17}/>{tr(lang, item.label)}{item.label === 'Alerts' && openAlerts > 0 && <i className="nav-dot"/>}</button>)}</div>)}</nav>
       <div className="nav-label tools-label">{tr(lang, 'PREFERENCES')}</div>
       <button className={page === 'Settings' ? 'nav-item selected' : 'nav-item'} onClick={() => go('Settings')}><Settings size={17}/>{tr(lang, 'Settings')}</button>
@@ -168,8 +176,8 @@ function Kpi({icon,label,value,sub,tone,onClick}:{icon:React.ReactNode;label:str
 function Overview({devices,sites,networks,online,loading,go,organizationId,prefs,setPrefs}:{devices:Device[];sites:Site[];networks:Net[];online:number;loading:boolean;go:(s:string,tab?:string)=>void;organizationId:string;prefs:Prefs;setPrefs:(p:Partial<Prefs>)=>void}) {
  const [rows,setRows]=useState<any[]>([]),[counts,setCounts]=useState({uptime:0,channels:0}),[alerts,setAlerts]=useState<any[]>([]);
  useEffect(()=>{let on=true;if(!supabase)return;const load=()=>{supabase!.from('device_metrics').select('cpu_percent,net_recv_bps,net_sent_bps,recorded_at').eq('organization_id',organizationId).gte('recorded_at',new Date(Date.now()-3600000).toISOString()).order('recorded_at').limit(1500).then(({data})=>{if(on)setRows(data??[]);});supabase!.from('alert_events').select('id,title,severity,triggered_at,status').eq('organization_id',organizationId).in('status',['open','acknowledged']).order('triggered_at',{ascending:false}).limit(5).then(({data})=>{if(on)setAlerts(data??[]);});Promise.all([supabase!.from('uptime_checks').select('id',{count:'exact',head:true}).eq('organization_id',organizationId),supabase!.from('notification_channels').select('id',{count:'exact',head:true}).eq('organization_id',organizationId)]).then(([a,b])=>{if(on)setCounts({uptime:a.count??0,channels:b.count??0});});};load();const t=window.setInterval(load,20000);return()=>{on=false;window.clearInterval(t);};},[organizationId]);
- const series=useMemo(()=>{const b=new Map<number,{c:number[];n:number}>();rows.forEach(r=>{const k=Math.floor(new Date(r.recorded_at).getTime()/60000);const e=b.get(k)??{c:[],n:0};if(r.cpu_percent!=null)e.c.push(Number(r.cpu_percent));e.n+=Number(r.net_recv_bps??0)+Number(r.net_sent_bps??0);b.set(k,e);});const keys=[...b.keys()].sort((x,y)=>x-y);return{cpu:keys.map(k=>{const c=b.get(k)!.c;return c.length?c.reduce((x,y)=>x+y,0)/c.length:null;}),net:keys.map(k=>b.get(k)!.n)};},[rows]);
- const lastCpu=[...series.cpu].reverse().find(v=>v!=null),lastNet=series.net[series.net.length-1];
+ const series=useMemo(()=>{const b=new Map<number,{c:number[];n:number[]}>();rows.forEach(r=>{const k=Math.floor(new Date(r.recorded_at).getTime()/300000);const e=b.get(k)??{c:[],n:[]};if(r.cpu_percent!=null)e.c.push(Number(r.cpu_percent));e.n.push(Number(r.net_recv_bps??0)+Number(r.net_sent_bps??0));b.set(k,e);});const avg=(x:number[])=>x.length?x.reduce((p,q)=>p+q,0)/x.length:null;const keys=[...b.keys()].sort((x,y)=>x-y);return{cpu:keys.map(k=>({t:k*300000,v:avg(b.get(k)!.c)})) as Point[],net:keys.map(k=>({t:k*300000,v:avg(b.get(k)!.n)})) as Point[]};},[rows]);
+ const lastCpu=[...series.cpu].reverse().find(p=>p.v!=null)?.v,lastNet=[...series.net].reverse().find(p=>p.v!=null)?.v;
  const offline=Math.max(0,devices.length-online);
  const availability=devices.length?Math.round((online/devices.length)*100):0;
  const workstation=devices.filter(d=>d.device_type==='workstation').length;
@@ -188,10 +196,10 @@ function Overview({devices,sites,networks,online,loading,go,organizationId,prefs
     <div className="ov-health"><div className="health-ring" style={{'--health-value':availability} as React.CSSProperties}><div><strong>{v(availability+'%')}</strong><small>Online rate</small></div></div>
      <ul className="ov-legend"><li><i className="g"/>Online<b>{v(online)}</b></li><li><i className="r"/>Offline<b>{v(offline)}</b></li><li><i className="m"/>Workstations<b>{v(workstation)}</b></li><li><i className="m"/>Servers & other<b>{v(Math.max(0,devices.length-workstation))}</b></li></ul></div></section>
    <section className="panel ov-card"><div className="card-head"><div><h3>Activity</h3><p>Averages across all devices, last hour</p></div><button className="text-button" onClick={()=>go('Traffic')}>Traffic →</button></div>
-    <div className="ov-metrics"><div><span>Average CPU</span><strong>{lastCpu==null?'—':Math.round(lastCpu)+'%'}</strong><Sparkline values={series.cpu} color="#f5630f"/></div><div><span>Network throughput</span><strong>{lastNet==null?'—':fmtBps(lastNet)}</strong><Sparkline values={series.net} color="#5ba6ff"/></div></div></section>
+    <div className="ov-metrics"><div><div className="ov-metric-head"><span>Average CPU</span><strong>{lastCpu==null?'—':Math.round(lastCpu)+'%'}</strong></div><LineChart points={series.cpu} color="#f5630f" height={150} max={100} unit="%"/></div><div><div className="ov-metric-head"><span>Network throughput</span><strong>{lastNet==null?'—':fmtBps(lastNet)}</strong></div><LineChart points={series.net} color="#5ba6ff" height={150} format={fmtBps}/></div></div></section>
   </div>
   <div className="ov-row split">
-   <section className="panel ov-card"><div className="card-head"><div><h3>Recently active devices</h3><p>Latest endpoints in your workspace</p></div><button className="text-button" onClick={()=>go('Devices')}>View all →</button></div><DeviceTable devices={devices.slice(0,6)} loading={loading}/></section>
+   <section className="panel ov-card"><div className="card-head"><div><h3>Recently active devices</h3><p>Latest endpoints in your workspace</p></div><button className="text-button" onClick={()=>go('Devices')}>View all →</button></div>{loading?<Skeleton rows={3}/>:devices.length?<ul className="ov-devices">{devices.slice(0,6).map(d=><li key={d.id}><span className="device-icon"><Server size={15}/></span><div><b>{d.hostname}</b><small>{d.ip_address??'—'} · {d.device_type??'device'}</small></div><span className={`status-pill ${deviceStatus(d)==='online'?'online':deviceStatus(d)==='offline'?'offline':'pending'}`}><i/>{deviceStatus(d)}</span><small className="ov-seen">{d.last_seen_at?new Date(d.last_seen_at).toLocaleString():'Never'}</small></li>)}</ul>:<EmptyState icon={<Boxes size={22}/>} title="No devices yet" text="Install the agent and it will appear here."/>}</section>
    <div className="ov-stack">
     <section className="panel ov-card"><div className="card-head"><div><h3>Open alerts</h3><p>Needs a look</p></div><button className="text-button" onClick={()=>go('Alerts')}>All alerts →</button></div>
      {alerts.length?<ul className="ov-alerts">{alerts.map(a=><li key={a.id}><span className={`sev sev-${a.severity}`}>{a.severity}</span><b>{a.title}</b><small>{new Date(a.triggered_at).toLocaleString()}</small></li>)}</ul>:<EmptyState icon={<ShieldCheck size={22}/>} title="All clear" text="No open alerts right now."/>}</section>
