@@ -1,5 +1,5 @@
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Activity, Bell, Boxes, Cable, ChevronDown, CircleHelp, LayoutDashboard, LogOut, Network, Search, Settings, ShieldCheck, Wifi, ScrollText, Globe2, FileBarChart, ClipboardList, Gauge, MonitorUp, Zap, LockKeyhole, Eye, EyeOff, MapPin, Server, ArrowUpRight, UserRound, KeyRound, Sun, Moon, Languages, MoreHorizontal } from 'lucide-react';
+import { Activity, Bell, Boxes, Cable, ChevronDown, CircleHelp, LayoutDashboard, LogOut, Network, Search, Settings, ShieldCheck, Wifi, ScrollText, Globe2, FileBarChart, ClipboardList, Gauge, MonitorUp, Zap, LockKeyhole, Eye, EyeOff, MapPin, Server, ArrowUpRight, UserRound, KeyRound, Sun, Moon, Languages, MoreHorizontal, Building2, Check, Plus } from 'lucide-react';
 import type { Session, User } from '@supabase/supabase-js';
 
 type Device = { id: string; hostname: string; ip_address: string | null; status: string; device_type: string | null; last_seen_at: string | null; site_id?: string; archived_at?: string | null };
@@ -8,7 +8,7 @@ type Net = { id: string; name: string; cidr: string | null; site_id: string };
 type Membership = { organization_id: string; role: 'owner' | 'admin' | 'operator' | 'viewer'; organizations?: { id: string; name: string }[] | null };
 import { supabase, configured, apiUrl, fmtBps } from './lib';
 import { AgentInstaller } from './AgentInstaller';
-import { Toaster, ConfirmHost, Flash, confirmDialog, usePrefs, tr, CommandPalette, Drawer, Skeleton, EmptyState, useTable, Th, Pager, Checklist, Select, type Command, type Prefs } from './ui';
+import { Toaster, ConfirmHost, Flash, confirmDialog, toast, usePrefs, tr, CommandPalette, Drawer, Skeleton, EmptyState, useTable, Th, Pager, Checklist, Select, type Command, type Prefs } from './ui';
 import { LineChart, type Point } from './Chart';
 import { LogsPage, UptimePage, ReportsPage, AuditPage, PlatformPage, ChannelsPanel, MaintenancePanel, DiscoveryPanel, DeviceDetail, NocWall } from './Monitoring';
 const nav = [
@@ -26,6 +26,9 @@ export default function App() {
   const [authReady, setAuthReady] = useState(!configured);
   const [page, setPage] = useState(pageFromPath);
   const [membership, setMembership] = useState<Membership | null>(null);
+  const [memberships, setMemberships] = useState<Membership[]>([]);
+  const activeOrgRef = useRef<string>('');
+  const [newWs, setNewWs] = useState(false); const [wsName, setWsName] = useState(''); const [wsBusy, setWsBusy] = useState(false);
   const [devices, setDevices] = useState<Device[]>([]);
   const [archivedDevices, setArchivedDevices] = useState<Device[]>([]);
   const [sites, setSites] = useState<Site[]>([]);
@@ -46,6 +49,19 @@ export default function App() {
   const lang = prefs.lang;
   const [wsOpen, setWsOpen] = useState(false); const wsRef = useRef<HTMLDivElement>(null);
   useEffect(() => { if (!wsOpen) return; const off = (e: MouseEvent) => { if (!wsRef.current?.contains(e.target as Node)) setWsOpen(false); }; document.addEventListener('mousedown', off); return () => document.removeEventListener('mousedown', off); }, [wsOpen]);
+  const orgOf = (m: Membership | null) => { const o: any = m?.organizations; return (Array.isArray(o) ? o[0]?.name : o?.name) ?? 'Workspace'; };
+  const switchOrg = (m: Membership) => { activeOrgRef.current = m.organization_id; setMembership(m); setPage('Overview'); };
+  const createWs = async (e: FormEvent) => {
+    e.preventDefault(); const name = wsName.trim(); if (!name || !supabase || !session?.user) return;
+    setWsBusy(true);
+    try {
+      const { data: newId, error } = await supabase.rpc('create_organization', { p_name: name });
+      if (error) throw error;
+      activeOrgRef.current = newId as string; setWsName(''); setNewWs(false); setWsOpen(false);
+      await loadWorkspace(session.user); toast('Workspace created');
+    } catch (err: any) { toast(err?.message ?? 'Could not create the workspace'); }
+    finally { setWsBusy(false); }
+  };
   const orgRaw: any = membership?.organizations; const orgName: string = (Array.isArray(orgRaw) ? orgRaw[0]?.name : orgRaw?.name) ?? 'Workspace';
   useEffect(() => { const k = (e: KeyboardEvent) => { if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') { e.preventDefault(); setPalette(p => !p); } }; window.addEventListener('keydown', k); return () => window.removeEventListener('keydown', k); }, []);
 
@@ -62,11 +78,14 @@ export default function App() {
     if (!loaded.current) setDataLoading(true);
     setDataError('');
     try {
-      const { data: member, error: memberError } = await supabase.from('organization_members').select('organization_id,role,organizations(id,name)').eq('user_id', user.id).limit(1).maybeSingle();
+      const { data: member, error: memberError } = await supabase.from('organization_members').select('organization_id,role,organizations(id,name)').eq('user_id', user.id);
       if (memberError) throw memberError;
-      setMembership(member as Membership | null);
-      if (!member) { setDevices([]); setArchivedDevices([]); setSites([]); setNetworks([]); return; }
-      const orgId = (member as Membership).organization_id;
+      const list = (member ?? []) as Membership[]; setMemberships(list);
+      const picked = list.find(m => m.organization_id === activeOrgRef.current) ?? list[0] ?? null;
+      activeOrgRef.current = picked?.organization_id ?? '';
+      setMembership(picked);
+      if (!picked) { setDevices([]); setArchivedDevices([]); setSites([]); setNetworks([]); return; }
+      const orgId = picked.organization_id;
       supabase.from('alert_events').select('id', { count: 'exact', head: true }).eq('organization_id', orgId).eq('status', 'open').then(({ count }) => setOpenAlerts(count ?? 0));
       const [deviceResult, siteResult, networkResult] = await Promise.all([
         supabase.from('devices').select('id,hostname,ip_address,status,device_type,last_seen_at,site_id,archived_at').eq('organization_id', orgId).order('last_seen_at', { ascending: false }),
@@ -109,7 +128,7 @@ export default function App() {
     { id: 'a-theme', label: prefs.theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme', hint: 'Appearance', run: () => setPrefs({ theme: prefs.theme === 'dark' ? 'light' : 'dark' }) },
     { id: 'a-lang', label: prefs.lang === 'en' ? 'التبديل إلى العربية' : 'Switch to English', hint: 'Language', run: () => setPrefs({ lang: prefs.lang === 'en' ? 'ar' : 'en' }) },
     { id: 'a-dense', label: prefs.dense ? 'Comfortable table density' : 'Compact table density', hint: 'Appearance', run: () => setPrefs({ dense: !prefs.dense }) },
-    { id: 'a-noc', label: tr(lang, 'NOC wall'), hint: 'Action', run: () => setNoc(true) },
+    { id: 'a-noc', label: tr(lang, 'NOC wall'), hint: 'Page', run: () => go('NOC wall') },
   ];
 
   if (!configured) return <AuthScreen configured={false} email={email} setEmail={setEmail} password={password} setPassword={setPassword} showPassword={showPassword} setShowPassword={setShowPassword} busy={false} error="" notice="" resetMode={false} setResetMode={() => {}} onSubmit={e => e.preventDefault()} />;
@@ -120,15 +139,18 @@ export default function App() {
     <aside className="sidebar">
       <div className="brand"><div className="brand-mark"><img src="/elite-mark.svg" alt="" /></div><div><b>ELITE</b><span>NETWORK INTELLIGENCE</span></div></div>
       <div className="workspace-wrap" ref={wsRef}><button className="workspace" aria-haspopup="menu" aria-expanded={wsOpen} onClick={() => setWsOpen(o => !o)}><div className="workspace-icon">{orgName.slice(0, 2).toUpperCase()}</div><div><b>{orgName}</b><small>{membership ? `${membership.role} access` : 'No organization access'}</small></div><ChevronDown size={15}/></button>
-        {wsOpen && <div className="ws-menu" role="menu"><div className="ws-menu-label">Add to workspace</div>
-          <button role="menuitem" onClick={() => { setWsOpen(false); go('Sites & Networks', 'agents'); }}><MonitorUp size={16}/>Install an agent</button>
-          <button role="menuitem" onClick={() => { setWsOpen(false); go('Sites & Networks', 'sites'); }}><MapPin size={16}/>Add a site</button>
-          <button role="menuitem" onClick={() => { setWsOpen(false); go('Uptime'); }}><Globe2 size={16}/>Add an uptime check</button>
-          <button role="menuitem" onClick={() => { setWsOpen(false); go('Settings', 'team'); }}><UserRound size={16}/>Invite a teammate</button></div>}</div>
+        {wsOpen && <div className="ws-menu" role="menu"><div className="ws-menu-label">Workspaces</div>
+          {memberships.map(m => <button key={m.organization_id} role="menuitem" className={m.organization_id === membership?.organization_id ? 'ws-item sel' : 'ws-item'} onClick={() => { setWsOpen(false); switchOrg(m); }}><Building2 size={16}/><span><b>{orgOf(m)}</b><small>{m.role}</small></span>{m.organization_id === membership?.organization_id && <Check size={15}/>}</button>)}
+          {!memberships.length && <p className="ws-empty">You have no workspaces yet.</p>}
+          <div className="ws-sep"/>
+          {newWs
+            ? <form className="ws-new" onSubmit={createWs}><input autoFocus value={wsName} onChange={e => setWsName(e.target.value)} placeholder="Workspace name"/><button className="primary-action sm" disabled={wsBusy || !wsName.trim()}>{wsBusy ? 'Creating…' : 'Create'}</button></form>
+            : <button role="menuitem" className="ws-item" onClick={() => setNewWs(true)}><Plus size={16}/><span><b>Create workspace</b></span></button>}
+          </div>}</div>
       <nav>{[['MONITOR', ['Overview','Devices','Topology','Traffic','Alerts','Logs','Uptime']], ['INSIGHTS', ['Reports','Audit log']], ['MANAGE', ['Sites & Networks', ...(membership && ['owner','admin'].includes(membership.role) ? ['Platform'] : [])]]].map(([group, labels]) => <div key={group as string}><div className="nav-label">{tr(lang, group as string)}</div>{[...nav, adminNav].filter(i => (labels as string[]).includes(i.label)).map(item => <button key={item.label} className={page === item.label ? 'nav-item selected' : 'nav-item'} onClick={() => go(item.label)}><item.icon size={17}/>{tr(lang, item.label)}{item.label === 'Alerts' && openAlerts > 0 && <i className="nav-dot"/>}</button>)}</div>)}</nav>
       <div className="nav-label tools-label">{tr(lang, 'PREFERENCES')}</div>
       <button className={page === 'Settings' ? 'nav-item selected' : 'nav-item'} onClick={() => go('Settings')}><Settings size={17}/>{tr(lang, 'Settings')}</button>
-      <button className="nav-item" onClick={() => setNoc(true)}><MonitorUp size={17}/>{tr(lang, 'NOC wall')}</button>
+      <button className={page === 'NOC wall' ? 'nav-item active' : 'nav-item'} onClick={() => go('NOC wall')}><MonitorUp size={17}/>{tr(lang, 'NOC wall')}</button>
       <a className="nav-item" href="https://github.com/elite-tech240/elite-network-intelligence/tree/main/docs" target="_blank" rel="noreferrer"><CircleHelp size={17}/>{tr(lang, 'Documentation')}</a>
       <div className="sidebar-bottom"><div className="profile"><div className="avatar">{(session.user.email?.[0] ?? 'U').toUpperCase()}</div><div><b>{session.user.email}</b><small>{membership?.role ?? 'No role assigned'}</small></div><button className="mini-icon" title="Sign out" onClick={signOut}><LogOut size={15}/></button></div></div>
     </aside>
@@ -148,6 +170,7 @@ export default function App() {
           {page === 'Logs' && <LogsPage organizationId={membership.organization_id} devices={devices}/>}
           {page === 'Uptime' && <UptimePage organizationId={membership.organization_id} role={membership.role} token={session.access_token} sites={sites}/>}
           {page === 'Reports' && <ReportsPage organizationId={membership.organization_id} token={session.access_token}/>}
+          {page === 'NOC wall' && <NocWall devices={devices} organizationId={membership.organization_id} embedded onPresent={() => setNoc(true)}/>}
           {page === 'Audit log' && <AuditPage organizationId={membership.organization_id}/>}
           {page === 'Platform' && ['owner','admin'].includes(membership.role) && <PlatformPage organizationId={membership.organization_id} token={session.access_token}/>}
           {page === 'Sites & Networks' && <SitesPage key={'t'+pageTab} initialTab={pageTab} sites={sites} networks={networks} organizationId={membership.organization_id} role={membership.role} accessToken={session.access_token} onRefresh={refresh}/>}
@@ -233,7 +256,19 @@ function DeviceTable({devices,loading,onArchive,onUninstall,busyDevice,onOpen}:{
 function TopologyPage({sites,networks,devices}:{sites:Site[];networks:Net[];devices:Device[]}) {
  const [tab,setTab]=useState('sites');
  return <div className="sites-workspace"><PageTabs items={[{id:'sites',label:'Sites'},{id:'networks',label:'Networks'},{id:'devices',label:'Devices'}]} active={tab} onChange={setTab}/>
- {tab==='sites'&&<div className="topology-grid">{sites.length===0&&<section className="panel empty-panel"><Network size={26}/><h3>No topology data yet</h3><p>Add a site and network to start mapping your infrastructure.</p></section>}{sites.map(site=><section className="panel topology-card" key={site.id}><div className="topology-title"><span className="quick-icon"><MapPin size={17}/></span><div><h3>{site.name}</h3><p>{site.location||'Location not specified'}</p></div></div><div className="topology-children">{networks.filter(n=>n.site_id===site.id).map(net=><div className="network-node" key={net.id}><Network size={16}/><span><b>{net.name}</b><small>{net.cidr||'CIDR not set'}</small></span></div>)}{!networks.some(n=>n.site_id===site.id)&&<p className="muted">No networks assigned.</p>}</div></section>)}</div>}
+ {tab==='sites'&&(sites.length===0
+  ? <section className="panel empty-panel"><Network size={26}/><h3>No topology data yet</h3><p>Add a site and network to start mapping your infrastructure.</p></section>
+  : <section className="panel topo2"><div className="panel-head"><div><h3>Infrastructure map</h3><p>Sites, the networks inside them, and the devices reporting from each.</p></div><span className="topo2-legend"><i className="on"/>online<i className="off"/>offline</span></div>
+    <div className="topo2-body">{sites.map(site=>{const nets=networks.filter(n=>n.site_id===site.id);const siteDevs=devices.filter(d=>d.site_id===site.id);const onCount=siteDevs.filter(d=>deviceStatus(d)==='online').length;
+     return <div className="topo2-site" key={site.id}>
+      <div className="topo2-node site"><span className="topo2-icon"><MapPin size={16}/></span><div><b>{site.name}</b><small>{site.location||'Location not specified'}</small></div><span className="topo2-count">{siteDevs.length} device{siteDevs.length===1?'':'s'} · {onCount} online</span></div>
+      <div className="topo2-branch">{nets.length===0
+        ? <div className="topo2-leafless">No networks assigned.</div>
+        : nets.map(net=>{const nd=siteDevs;return <div className="topo2-net" key={net.id}>
+          <div className="topo2-node net"><span className="topo2-icon"><Network size={15}/></span><div><b>{net.name}</b><small>{net.cidr||'CIDR not set'}</small></div></div>
+          <div className="topo2-devices">{nd.length===0?<span className="topo2-leafless">No devices reporting.</span>:nd.map(d=><span className={'topo2-dev '+deviceStatus(d)} key={d.id} title={d.ip_address??''}><i/>{d.hostname}</span>)}</div>
+        </div>;})}</div>
+     </div>;})}</div></section>)}
  {tab==='networks'&&<section className="panel page-panel"><div className="table-wrap"><table><thead><tr><th>NETWORK</th><th>CIDR</th><th>SITE</th><th>DEVICES</th></tr></thead><tbody>{networks.map(n=><tr key={n.id}><td>{n.name}</td><td>{n.cidr||'—'}</td><td>{sites.find(s=>s.id===n.site_id)?.name??'—'}</td><td>{devices.filter(d=>d.site_id===n.site_id).length}</td></tr>)}{!networks.length&&<tr><td colSpan={4} className="empty">No networks available.</td></tr>}</tbody></table></div></section>}
  {tab==='devices'&&<section className="panel page-panel"><DeviceTable devices={devices} loading={false}/></section>}
  </div>;

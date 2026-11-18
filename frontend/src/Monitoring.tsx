@@ -1,5 +1,6 @@
 import { FormEvent, useCallback, useEffect, useState } from 'react';
 import { supabase, api, fmtBps, fmtUptime, ago, LATEST_AGENT_VERSION, type Role } from './lib';
+import { Maximize2 } from 'lucide-react';
 import { LineChart, Sparkline, type Point } from './Chart';
 import { Flash, confirmDialog, Skeleton, Select } from './ui';
 
@@ -224,20 +225,36 @@ export function DeviceDetail({ devices, initialId }: { devices: Dev[]; initialId
 }
 
 /* ---------------------------------------------------- NOC wall (full screen) */
-export function NocWall({ devices, organizationId, onClose }: { devices: { id: string; hostname: string; status: string; last_seen_at: string | null; ip_address?: string | null }[]; organizationId: string; onClose: () => void }) {
+export function NocWall({ devices, organizationId, onClose, embedded, onPresent }: { devices: { id: string; hostname: string; status: string; last_seen_at: string | null; ip_address?: string | null }[]; organizationId: string; onClose?: () => void; embedded?: boolean; onPresent?: () => void }) {
+  const [filter, setFilter] = useState('all'); const [q, setQ] = useState('');
   const [alerts, setAlerts] = useState<any[]>([]); const [now, setNow] = useState(Date.now());
   useTick(() => { setNow(Date.now()); supabase?.from('alert_events').select('id,title,severity,triggered_at').eq('organization_id', organizationId).in('status', ['open', 'acknowledged']).order('triggered_at', { ascending: false }).limit(8).then(({ data }) => setAlerts(data ?? [])); }, 10000, [organizationId]);
   useEffect(() => { const t = window.setInterval(() => setNow(Date.now()), 1000); return () => window.clearInterval(t); }, []);
-  useEffect(() => { const k = (e: KeyboardEvent) => e.key === 'Escape' && onClose(); window.addEventListener('keydown', k); return () => window.removeEventListener('keydown', k); }, [onClose]);
+  useEffect(() => { if (embedded) return; const k = (e: KeyboardEvent) => e.key === 'Escape' && onClose?.(); window.addEventListener('keydown', k); return () => window.removeEventListener('keydown', k); }, [onClose, embedded]);
   const state = (d: any) => !d.last_seen_at || Date.now() - new Date(d.last_seen_at).getTime() > 120000 ? 'offline' : d.status;
   const up = devices.filter(d => state(d) === 'online').length; const down = devices.length - up;
-  const sorted = [...devices].sort((a, b) => Number(state(a) === 'online') - Number(state(b) === 'online') || a.hostname.localeCompare(b.hostname));
+  const sorted = [...devices]
+    .filter(d => (filter === 'all' || state(d) === filter) && (!q.trim() || d.hostname.toLowerCase().includes(q.trim().toLowerCase()) || (d.ip_address ?? '').includes(q.trim())))
+    .sort((a, b) => Number(state(a) === 'online') - Number(state(b) === 'online') || a.hostname.localeCompare(b.hostname));
+  const dense = devices.length > 24;
+  const stats = <div className="noc2-stats"><div className="noc2-stat ok"><span>Online</span><strong>{up}</strong></div><div className={down ? 'noc2-stat bad' : 'noc2-stat'}><span>Offline</span><strong>{down}</strong></div><div className="noc2-stat"><span>Total devices</span><strong>{devices.length}</strong></div><div className={alerts.length ? 'noc2-stat warn' : 'noc2-stat'}><span>Open alerts</span><strong>{alerts.length}</strong></div></div>;
+  const grid = <div className={dense ? 'noc2-grid dense' : 'noc2-grid'}>{sorted.map(d => <div key={d.id} className={`noc2-tile ${state(d)}`}><i/><div><b>{d.hostname}</b><small>{d.ip_address ?? state(d)}</small></div><span>{state(d)}</span></div>)}{!devices.length && <p className="muted">No devices enrolled yet.</p>}{devices.length > 0 && !sorted.length && <p className="muted">No device matches this filter.</p>}</div>;
+  const alertList = alerts.length ? alerts.map(a => <div key={a.id} className={`noc2-alert sev-${a.severity}`}><b>{a.title}</b><small>{ago(a.triggered_at)}</small></div>) : <div className="noc2-clear">All clear</div>;
+  if (embedded) return <div className="sites-workspace noc-page">
+    {stats}
+    <div className="filter-bar"><Tabs items={[{ id: 'all', label: `All (${devices.length})` }, { id: 'offline', label: `Offline (${down})` }, { id: 'online', label: `Online (${up})` }]} active={filter} onChange={setFilter}/>
+      <input className="noc-search" placeholder="Search host or IP…" value={q} onChange={e => setQ(e.target.value)}/>
+      <button className="secondary-action" onClick={onPresent}><Maximize2 size={15}/>Present fullscreen</button></div>
+    <div className="two-col noc-split">
+      <section className="panel page-panel"><div className="panel-head"><div><h3>Devices</h3><p>{devices.length ? `${up} online · ${down} offline` : 'Nothing enrolled yet'}</p></div></div><div className="noc-embed-grid">{grid}</div></section>
+      <section className="panel page-panel"><div className="panel-head"><div><h3>Open alerts</h3><p>Needs a look</p></div></div><div className="noc-embed-alerts">{alertList}</div></section>
+    </div></div>;
   return <div className="noc2" role="dialog" aria-label="NOC wall">
     <header className="noc2-head"><div className="noc2-brand"><img src="/elite-network-mark.svg" alt=""/><div><b>ELITE</b><span>NETWORK OPERATIONS CENTER</span></div></div>
       <div className="noc2-clock"><strong>{new Date(now).toLocaleTimeString()}</strong><span>{new Date(now).toLocaleDateString(undefined, { weekday: 'long', day: 'numeric', month: 'long' })}</span></div>
       <button className="secondary-action" onClick={onClose}>Exit · Esc</button></header>
-    <div className="noc2-stats"><div className="noc2-stat ok"><span>Online</span><strong>{up}</strong></div><div className={down ? 'noc2-stat bad' : 'noc2-stat'}><span>Offline</span><strong>{down}</strong></div><div className="noc2-stat"><span>Total devices</span><strong>{devices.length}</strong></div><div className={alerts.length ? 'noc2-stat warn' : 'noc2-stat'}><span>Open alerts</span><strong>{alerts.length}</strong></div></div>
-    <div className="noc2-body"><section><h2>Devices</h2><div className="noc2-grid">{sorted.map(d => <div key={d.id} className={`noc2-tile ${state(d)}`}><i/><div><b>{d.hostname}</b><small>{d.ip_address ?? state(d)}</small></div><span>{state(d)}</span></div>)}{!devices.length && <p className="muted">No devices enrolled yet.</p>}</div></section>
-      <aside><h2>Open alerts</h2>{alerts.length ? alerts.map(a => <div key={a.id} className={`noc2-alert sev-${a.severity}`}><b>{a.title}</b><small>{ago(a.triggered_at)}</small></div>) : <div className="noc2-clear">All clear</div>}</aside></div>
+    {stats}
+    <div className="noc2-body"><section><h2>Devices</h2>{grid}</section>
+      <aside><h2>Open alerts</h2>{alertList}</aside></div>
   </div>;
 }
