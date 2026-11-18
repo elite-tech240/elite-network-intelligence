@@ -12,10 +12,6 @@ on:
       - 'agent/**'
       - 'frontend/**'
       - '.github/workflows/build-windows-agent-installer.yml'
-  pull_request:
-    paths:
-      - 'agent/**'
-      - '.github/workflows/build-windows-agent-installer.yml'
   workflow_dispatch:
 
 permissions:
