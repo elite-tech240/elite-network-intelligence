@@ -1,6 +1,7 @@
 import { FormEvent, useCallback, useEffect, useState } from 'react';
 import { supabase, api, fmtBps, fmtUptime, ago, LATEST_AGENT_VERSION, type Role } from './lib';
 import { LineChart, Sparkline, type Point } from './Chart';
+import { Flash, confirmDialog, Skeleton } from './ui';
 
 type Dev = { id: string; hostname: string; agent_version?: string | null };
 const isOp = (r: Role) => ['owner', 'admin', 'operator'].includes(r);
@@ -40,7 +41,7 @@ export function LogsPage({ organizationId, devices }: { organizationId: string; 
           const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' })); a.download = 'device-logs.csv'; a.click(); URL.revokeObjectURL(a.href);
         }} disabled={!rows.length}>Export CSV</button>
       </div>
-      {err && <div className="error-banner">{err}</div>}
+      <Flash kind="error" msg={err}/>
       <div className="table-wrap"><table><thead><tr><th>TIME</th><th>DEVICE</th><th>LEVEL</th><th>SOURCE</th><th>MESSAGE</th></tr></thead><tbody>
         {rows.map(r => <tr key={r.id}><td>{new Date(r.logged_at).toLocaleString()}</td><td>{name(r.device_id)}</td><td><Sev level={r.level}/></td><td>{r.source}{r.event_id ? ` · ${r.event_id}` : ''}</td><td className="wrap-cell">{r.message}</td></tr>)}
         {!rows.length && <Empty cols={5} text="No logs match. Logs appear once an agent v0.4.0+ is installed and reports warnings or errors."/>}
@@ -67,9 +68,9 @@ export function UptimePage({ organizationId, role, token, sites }: { organizatio
   };
   const run = async (id: string) => { setBusy(id); setErr(''); try { const r = await api('/uptime-checks/run', token, { method: 'POST', body: { check_id: id } }); setMsg(r.status === 'up' ? `Up · ${r.latency_ms} ms` : `Down · ${r.error}`); void load(); } catch (e) { setErr((e as Error).message); } finally { setBusy(''); } };
   const toggle = async (c: any) => { await supabase?.from('uptime_checks').update({ enabled: !c.enabled }).eq('id', c.id); void load(); };
-  const del = async (c: any) => { if (!window.confirm(`Delete check "${c.name}"?`)) return; await supabase?.from('uptime_checks').delete().eq('id', c.id); void load(); };
+  const del = async (c: any) => { if (!await confirmDialog(`Delete check "${c.name}"?`)) return; await supabase?.from('uptime_checks').delete().eq('id', c.id); void load(); };
   return <div className="sites-workspace">
-    {msg && <div className="success-banner">{msg}</div>}{err && <div className="error-banner">{err}</div>}
+    <Flash kind="success" msg={msg}/><Flash kind="error" msg={err}/>
     {isOp(role) && <form className="panel asset-form" onSubmit={add}><h3>Add uptime check</h3>
       <label>Name<input value={name} onChange={e => setName(e.target.value)} required maxLength={80} placeholder="Company website"/></label>
       <label>Type<select value={type} onChange={e => { setType(e.target.value); setTarget(e.target.value === 'http' ? 'https://' : ''); }}><option value="http">HTTP(S) page</option><option value="tcp">TCP port</option></select></label>
@@ -94,7 +95,7 @@ export function ReportsPage({ organizationId, token }: { organizationId: string;
   useEffect(() => { let on = true; setLoading(true); setErr(''); api(`/reports/summary?organization_id=${organizationId}&days=${days}`, token).then(d => on && setR(d)).catch(e => on && setErr(e.message)).finally(() => on && setLoading(false)); return () => { on = false; }; }, [organizationId, days, token]);
   return <div className="sites-workspace report-page">
     <div className="tabs-row no-print"><p className="muted">Availability, usage and incidents for the selected period.</p><div className="sites-actions"><select className="filter-select" value={days} onChange={e => setDays(Number(e.target.value))}><option value={7}>Last 7 days</option><option value={30}>Last 30 days</option><option value={90}>Last 90 days</option></select><button className="primary-action" onClick={() => window.print()} disabled={!r}>Print / Save as PDF</button></div></div>
-    {err && <div className="error-banner">{err}</div>}{loading && <div className="loading-line">Building report…</div>}
+    <Flash kind="error" msg={err}/>{loading && <Skeleton rows={4}/>}
     {r && <>
       <section className="panel page-panel"><div className="panel-head"><div><h3>Devices</h3><p>{r.period.from.slice(0, 10)} → {r.period.to.slice(0, 10)}</p></div></div><div className="table-wrap"><table><thead><tr><th>DEVICE</th><th>AVAILABILITY</th><th>CPU AVG</th><th>MEMORY AVG</th><th>DISK MAX</th><th>AVG DOWNLOAD</th><th>AVG UPLOAD</th></tr></thead><tbody>
         {r.devices.map((d: any) => <tr key={d.id ?? d.hostname}><td><b>{d.hostname}</b></td><td>{d.availability_percent}%</td><td>{d.cpu_avg ?? '—'}%</td><td>{d.memory_avg ?? '—'}%</td><td>{d.disk_max ?? '—'}%</td><td>{fmtBps(d.net_recv_bps_avg)}</td><td>{fmtBps(d.net_sent_bps_avg)}</td></tr>)}
@@ -125,7 +126,7 @@ export function PlatformPage({ organizationId, token }: { organizationId: string
   const tick = s?.last_tick; const tickAge = tick?.updated_at ? (Date.now() - new Date(tick.updated_at).getTime()) / 1000 : null;
   const healthy = tickAge != null && tickAge < 180;
   const Row = ({ k, v, ok }: { k: string; v: React.ReactNode; ok?: boolean }) => <div className="setting-row"><span>{k}</span><b className={ok === undefined ? '' : ok ? 'txt-good' : 'txt-bad'}>{v}</b></div>;
-  return <div className="sites-workspace">{err && <div className="error-banner">{err}</div>}
+  return <div className="sites-workspace"><Flash kind="error" msg={err}/>
     {s && <div className="two-col">
       <section className="panel settings-card"><h3>Monitoring engine</h3><p>Background jobs run every minute.</p>
         <Row k="Scheduler" v={healthy ? 'Running' : 'Stalled'} ok={healthy}/><Row k="Last run" v={tickAge == null ? 'never' : ago(tick.updated_at)}/><Row k="Last run duration" v={tick?.value?.duration_ms != null ? tick.value.duration_ms + ' ms' : '—'}/>
@@ -147,10 +148,10 @@ export function ChannelsPanel({ organizationId, role, token }: { organizationId:
   if (!isAdmin(role)) return <section className="panel settings-card"><p className="muted">Only owners and admins can manage notification channels.</p></section>;
   const add = async (e: FormEvent) => { e.preventDefault(); if (!supabase) return; setErr(''); setMsg(''); const config = type === 'email' ? { to: dest.trim() } : type === 'telegram' ? { chat_id: dest.trim() } : { url: dest.trim() }; const { error } = await supabase.from('notification_channels').insert({ organization_id: organizationId, name: name.trim(), channel_type: type, config, min_severity: sev, enabled: true }); if (error) setErr(error.message); else { setName(''); setDest(''); setMsg('Channel added. Press “Send test” to confirm it works.'); void load(); } };
   const test = async (id: string) => { setBusy(id); setErr(''); setMsg(''); try { const r = await api('/notification-channels/test', token, { method: 'POST', body: { channel_id: id } }); setMsg(r.ok ? 'Test notification sent.' : 'Not sent: ' + r.detail); } catch (e) { setErr((e as Error).message); } finally { setBusy(''); void load(); } };
-  const del = async (id: string) => { if (window.confirm('Delete this channel?')) { await supabase?.from('notification_channels').delete().eq('id', id); void load(); } };
+  const del = async (id: string) => { if (await confirmDialog('Delete this channel?')) { await supabase?.from('notification_channels').delete().eq('id', id); void load(); } };
   const flip = async (c: any) => { await supabase?.from('notification_channels').update({ enabled: !c.enabled }).eq('id', c.id); void load(); };
   const shown = (c: any) => c.channel_type === 'email' ? c.config?.to : c.channel_type === 'telegram' ? 'chat ' + c.config?.chat_id : (() => { try { return new URL(c.config?.url).host; } catch { return 'webhook'; } })();
-  return <div className="sites-workspace">{msg && <div className="success-banner">{msg}</div>}{err && <div className="error-banner">{err}</div>}
+  return <div className="sites-workspace"><Flash kind="success" msg={msg}/><Flash kind="error" msg={err}/>
     <form className="panel asset-form" onSubmit={add}><h3>Add notification channel</h3>
       <label>Name<input value={name} onChange={e => setName(e.target.value)} required maxLength={60} placeholder="IT team"/></label>
       <label>Type<select value={type} onChange={e => { setType(e.target.value); setDest(''); }}><option value="email">Email</option><option value="telegram">Telegram</option><option value="webhook">Webhook (Slack, Teams, etc.)</option></select></label>
@@ -171,7 +172,7 @@ export function MaintenancePanel({ organizationId, role }: { organizationId: str
   const start = async (e: FormEvent) => { e.preventDefault(); if (!supabase) return; setErr(''); const now = Date.now(); const { error } = await supabase.from('maintenance_windows').insert({ organization_id: organizationId, name: name.trim(), starts_at: new Date(now - 1000).toISOString(), ends_at: new Date(now + Number(mins) * 60000).toISOString() }); if (error) setErr(error.message); else void load(); };
   const end = async (id: string) => { await supabase?.from('maintenance_windows').update({ ends_at: new Date().toISOString() }).eq('id', id); void load(); };
   const active = (w: any) => new Date(w.starts_at).getTime() <= Date.now() && new Date(w.ends_at).getTime() >= Date.now();
-  return <div className="sites-workspace">{err && <div className="error-banner">{err}</div>}
+  return <div className="sites-workspace"><Flash kind="error" msg={err}/>
     {isOp(role) && <form className="panel asset-form" onSubmit={start}><h3>Start a maintenance window</h3><label>Reason<input value={name} onChange={e => setName(e.target.value)} required maxLength={80}/></label><label>For<select value={mins} onChange={e => setMins(e.target.value)}><option value="30">30 minutes</option><option value="60">1 hour</option><option value="240">4 hours</option><option value="720">12 hours</option></select></label><div className="form-actions"><button className="primary-action">Start now</button></div><p className="muted form-note">While a window is active, new alerts and notifications are paused so planned work does not page anyone.</p></form>}
     <section className="panel page-panel"><div className="table-wrap"><table><thead><tr><th>WINDOW</th><th>FROM</th><th>UNTIL</th><th></th></tr></thead><tbody>{rows.map(w => <tr key={w.id}><td><b>{w.name}</b> {active(w) && <span className="status-pill pending"><i/>active</span>}</td><td>{new Date(w.starts_at).toLocaleString()}</td><td>{new Date(w.ends_at).toLocaleString()}</td><td>{isOp(role) && active(w) && <button className="secondary-action" onClick={() => end(w.id)}>End now</button>}</td></tr>)}{!rows.length && <Empty cols={4} text="No maintenance windows."/>}</tbody></table></div></section></div>;
 }
@@ -192,8 +193,8 @@ export function DiscoveryPanel({ organizationId, role, sites }: { organizationId
 
 /* ----------------------------------------- Device detail (charts + info) */
 const RANGES: Record<string, { label: string; hours: number }> = { '1': { label: '1 hour', hours: 1 }, '24': { label: '24 hours', hours: 24 }, '168': { label: '7 days', hours: 168 }, '720': { label: '30 days', hours: 720 } };
-export function DeviceDetail({ devices }: { devices: Dev[] }) {
-  const [id, setId] = useState(devices[0]?.id ?? ''); const [range, setRange] = useState('24'); const [pts, setPts] = useState<any[]>([]); const [latest, setLatest] = useState<any>(null); const [logs, setLogs] = useState<any[]>([]);
+export function DeviceDetail({ devices, initialId }: { devices: Dev[]; initialId?: string }) {
+  const [id, setId] = useState(initialId ?? devices[0]?.id ?? ''); const [range, setRange] = useState('24'); const [pts, setPts] = useState<any[]>([]); const [latest, setLatest] = useState<any>(null); const [logs, setLogs] = useState<any[]>([]);
   useEffect(() => { if (!id && devices[0]) setId(devices[0].id); }, [devices, id]);
   const load = useCallback(async () => {
     if (!supabase || !id) return; const hours = RANGES[range].hours; const since = new Date(Date.now() - hours * 3600000).toISOString();
