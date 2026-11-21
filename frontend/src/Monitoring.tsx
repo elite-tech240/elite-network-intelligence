@@ -205,6 +205,22 @@ export function DeviceDetail({ devices, initialId }: { devices: Dev[]; initialId
     const { data: lg } = await supabase.from('device_logs').select('id,level,message,logged_at').eq('device_id', id).order('logged_at', { ascending: false }).limit(6); setLogs(lg ?? []);
   }, [id, range]);
   useTick(() => void load(), 20000, [load]);
+  // Append each new sample as it arrives, so the chart moves between refreshes.
+  useEffect(() => {
+    if (!supabase || !id || RANGES[range].hours > 24) return;
+    const channel = supabase.channel('device-metrics-' + id)
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'device_metrics', filter: 'device_id=eq.' + id },
+        (payload: any) => {
+          const r = payload.new;
+          if (!r?.recorded_at) return;
+          const cut = Date.now() - RANGES[range].hours * 3600000;
+          setPts(prev => [...prev, { t: new Date(r.recorded_at).getTime(), cpu: r.cpu_percent, mem: r.memory_percent, disk: r.disk_percent, up: r.net_sent_bps, down: r.net_recv_bps }]
+            .filter(p => p.t >= cut));
+          setLatest((prev: any) => ({ ...(prev ?? {}), recorded_at: r.recorded_at, uptime_seconds: r.uptime_seconds ?? prev?.uptime_seconds, top_processes: r.top_processes ?? prev?.top_processes }));
+        })
+      .subscribe();
+    return () => { supabase?.removeChannel(channel); };
+  }, [id, range]);
   const dev = devices.find(d => d.id === id); const series = (k: string): Point[] => pts.map(p => ({ t: p.t, v: p[k] }));
   const [latestVersion, setLatestVersion] = useState(LATEST_AGENT_VERSION);
   const [upgrade, setUpgrade] = useState<any>(null); const [busy, setBusy] = useState(false);
