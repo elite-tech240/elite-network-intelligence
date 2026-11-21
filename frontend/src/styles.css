@@ -905,3 +905,4 @@ td.empty,.empty{padding:40px 24px!important;text-align:center!important;color:va
 .page-panel>.error-banner,.page-panel>.success-banner{margin:16px 24px 0}
 @media(max-width:650px){th:first-child,td:first-child{padding-inline-start:16px!important}th:last-child,td:last-child{padding-inline-end:16px!important}.filter-bar{padding:14px 16px}.filter-bar .select,.filter-bar .filter-select,.filter-bar .filter-input{flex:1 1 100%}.filter-bar>.secondary-action{margin:0;width:100%}}
 .modal-row{display:grid;grid-template-columns:minmax(0,1.4fr) minmax(0,1fr);gap:12px}.form-modal{overflow:visible!important}.modal-note{margin:0}@media(max-width:520px){.modal-row{grid-template-columns:1fr}}
+.select.open{z-index:60}.modal .select-menu{z-index:70}
