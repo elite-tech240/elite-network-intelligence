@@ -160,7 +160,17 @@ export default function App() {
   const [pageTab, setPageTab] = useState('');
   const go = (label: string, tab = '') => { setPageTab(tab); const item = [...nav, adminNav].find(n => n.label === label); const path = item?.path ?? (label === 'Settings' ? '/settings' : '/'); window.history.pushState({}, '', path); setPage(label); };
   const signIn = async (e: FormEvent) => { e.preventDefault(); if (!supabase) return; setBusy(true); setAuthError(''); setNotice(''); const { error } = await supabase.auth.signInWithPassword({ email: email.trim(), password }); if (error) setAuthError(error.message); setBusy(false); };
-  const sendReset = async (e: FormEvent) => { e.preventDefault(); if (!supabase) return; setBusy(true); setAuthError(''); const { error } = await supabase.auth.resetPasswordForEmail(email.trim(), { redirectTo: `${window.location.origin}/login` }); if (error) setAuthError(error.message); else setNotice('Password reset email sent. Check your inbox.'); setBusy(false); };
+  const sendReset = async (e: FormEvent) => {
+    e.preventDefault(); setBusy(true); setAuthError(''); setNotice('');
+    try {
+      // Routed through the backend instead of supabase.auth.resetPasswordForEmail directly,
+      // so an email with no account gets an honest "no account found" instead of Supabase's
+      // default of silently "succeeding" either way.
+      await api('/auth/reset-password', '', { method: 'POST', body: { email: email.trim() } });
+      setNotice('Password reset email sent. Check your inbox.');
+    } catch (e) { setAuthError(e instanceof Error ? e.message : 'Could not send the reset email.'); }
+    finally { setBusy(false); }
+  };
   const signOut = async () => { if (!(await confirmDialog('You will need to sign in again to access your workspace.', { title: 'Sign out?', confirmText: 'Sign out', danger: false }))) return; if (supabase) await supabase.auth.signOut(); window.history.replaceState({}, '', '/login'); setPage('Overview'); };
   const refresh = () => { if (session?.user) void loadWorkspace(session.user); };
   const online = devices.filter(d => deviceStatus(d) === 'online').length;
@@ -453,10 +463,55 @@ function SettingsPage({initialTab,user,membership,accessToken,onSignOut,orgName,
   {isOwner&&<section className="panel settings-card danger-card"><div className="settings-icon danger"><Trash2 size={19}/></div><h3>Delete this workspace</h3><p>Removes {orgName} with every site, network, device, metric, alert and member in it. This cannot be undone.</p><button className="danger-action" onClick={onDeleteWorkspace}><Trash2 size={15}/>Delete workspace</button></section>}</>}
  {tab==='notify'&&<ChannelsPanel organizationId={membership.organization_id} role={membership.role} token={accessToken}/>}
  {tab==='maint'&&<MaintenancePanel organizationId={membership.organization_id} role={membership.role}/>}
- {tab==='team'&&<TeamInvite organizationId={membership.organization_id} role={membership.role} accessToken={accessToken}/>}
+ {tab==='team'&&<><TeamInvite organizationId={membership.organization_id} role={membership.role} accessToken={accessToken}/><TeamMembers organizationId={membership.organization_id} role={membership.role} accessToken={accessToken} currentUserId={user.id}/></>}
  </div>;
 }
-function TeamInvite({organizationId,role,accessToken}:{organizationId:string;role:Membership['role'];accessToken:string}) { const [email,setEmail]=useState(''),[inviteRole,setInviteRole]=useState('viewer'),[busy,setBusy]=useState(false),[message,setMessage]=useState(''),[error,setError]=useState('');if(!['owner','admin'].includes(role))return null;const invite=async(e:FormEvent)=>{e.preventDefault();if(!apiUrl){setError('VITE_API_URL is not configured.');return;}setBusy(true);setError('');setMessage('');try{const response=await fetch(apiUrl+'/team/invite',{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+accessToken},body:JSON.stringify({organization_id:organizationId,email:email.trim(),role:inviteRole})});const body=await response.json();if(!response.ok)throw new Error(body.detail||'Invite failed');setMessage('Invitation sent to '+body.email);setEmail('');}catch(e){setError(e instanceof Error?e.message:'Invitation failed.');}finally{setBusy(false);}};return <section className="panel settings-card"><div className="settings-icon"><UserRound size={19}/></div><h3>Team management</h3><p>Invite a teammate by email. Supabase Auth sends the invitation link; the selected role is assigned to this workspace.</p><form className="asset-form" onSubmit={invite}><label>Team member email<input type="email" value={email} onChange={e=>setEmail(e.target.value)} placeholder="colleague@company.com" required/></label><label>Workspace role<Select value={inviteRole} onChange={e=>setInviteRole(e.target.value)}><option value="viewer">Viewer</option><option value="operator">Operator</option>{role==='owner'&&<option value="admin">Admin</option>}</Select></label><Flash kind="error" msg={error}/><Flash kind="success" msg={message}/><button className="primary-action" disabled={busy}>{busy?'Sending…':'Send invitation'}</button></form></section>; }
+function TeamInvite({organizationId,role,accessToken}:{organizationId:string;role:Membership['role'];accessToken:string}) { const [email,setEmail]=useState(''),[inviteRole,setInviteRole]=useState('viewer'),[busy,setBusy]=useState(false),[message,setMessage]=useState(''),[error,setError]=useState('');if(!['owner','admin'].includes(role))return null;const invite=async(e:FormEvent)=>{e.preventDefault();if(!apiUrl){setError('VITE_API_URL is not configured.');return;}setBusy(true);setError('');setMessage('');try{const response=await fetch(apiUrl+'/team/invite',{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+accessToken},body:JSON.stringify({organization_id:organizationId,email:email.trim(),role:inviteRole})});const body=await response.json();if(!response.ok)throw new Error(body.detail||'Invite failed');setMessage('Invitation sent to '+body.email);setEmail('');}catch(e){setError(e instanceof Error?e.message:'Invitation failed.');}finally{setBusy(false);}};return <section className="panel settings-card"><div className="settings-icon"><UserRound size={19}/></div><h3>Invite a teammate</h3><p>Invite a teammate by email. Supabase Auth sends the invitation link; the selected role is assigned to this workspace.</p><form className="asset-form" onSubmit={invite}><label>Team member email<input type="email" value={email} onChange={e=>setEmail(e.target.value)} placeholder="colleague@company.com" required/></label><label>Workspace role<Select value={inviteRole} onChange={e=>setInviteRole(e.target.value)}><option value="viewer">Viewer</option><option value="operator">Operator</option>{role==='owner'&&<option value="admin">Admin</option>}</Select></label><Flash kind="error" msg={error}/><Flash kind="success" msg={message}/><button className="primary-action" disabled={busy}>{busy?'Sending…':'Send invitation'}</button></form></section>; }
+
+type TeamMember = { user_id: string; email: string; role: Membership['role']; created_at: string };
+function TeamMembers({organizationId,role,accessToken,currentUserId}:{organizationId:string;role:Membership['role'];accessToken:string;currentUserId:string}) {
+  const [members,setMembers]=useState<TeamMember[]>([]); const [loading,setLoading]=useState(true); const [error,setError]=useState('');
+  const [busyId,setBusyId]=useState('');
+  if (!['owner','admin'].includes(role)) return null;
+  const load = useCallback(async () => {
+    setLoading(true); setError('');
+    try { const data = await api<{members:TeamMember[]}>('/team/members?organization_id='+organizationId, accessToken); setMembers(data.members); }
+    catch (e) { setError(e instanceof Error ? e.message : 'Could not load members.'); }
+    finally { setLoading(false); }
+  }, [organizationId, accessToken]);
+  useEffect(() => { void load(); }, [load]);
+  const changeRole = async (m: TeamMember, newRole: string) => {
+    if (newRole === m.role) return;
+    setBusyId(m.user_id); setError('');
+    try { await api('/team/members/role', accessToken, { method: 'POST', body: { organization_id: organizationId, user_id: m.user_id, role: newRole } }); toast('Role updated'); await load(); }
+    catch (e) { setError(e instanceof Error ? e.message : 'Could not change that role.'); }
+    finally { setBusyId(''); }
+  };
+  const removeMember = async (m: TeamMember) => {
+    const ok = await confirmDialog(`Remove ${m.email} from this workspace?`, { confirmText: 'Remove', danger: true });
+    if (!ok) return;
+    setBusyId(m.user_id); setError('');
+    try { await api('/team/members/remove', accessToken, { method: 'POST', body: { organization_id: organizationId, user_id: m.user_id } }); toast('Member removed'); await load(); }
+    catch (e) { setError(e instanceof Error ? e.message : 'Could not remove that member.'); }
+    finally { setBusyId(''); }
+  };
+  return <section className="panel settings-card">
+    <div className="settings-icon"><UserRound size={19}/></div><h3>Members</h3><p>Everyone with access to this workspace. Change a role or remove someone below.</p>
+    <Flash kind="error" msg={error}/>
+    {loading ? <Skeleton rows={3}/> : !members.length ? <EmptyState icon={<UserRound size={22}/>} title="No members yet" text="Invite someone above to get started."/> : <div className="table-wrap"><table>
+      <thead><tr><th>EMAIL</th><th>ROLE</th><th>ACTIONS</th></tr></thead>
+      <tbody>{members.map(m => { const self = m.user_id === currentUserId; const canEditThis = role === 'owner' || !['owner','admin'].includes(m.role); return (
+        <tr key={m.user_id}>
+          <td>{m.email}{self ? ' (you)' : ''}</td>
+          <td>{self || !canEditThis ? <span className={m.role==='owner'?'role-badge owner':'role-badge'}>{m.role}</span> : <Select value={m.role} onChange={e=>changeRole(m, e.target.value)} disabled={busyId===m.user_id}>
+            <option value="viewer">Viewer</option><option value="operator">Operator</option>{role==='owner'&&<option value="admin">Admin</option>}{m.role==='owner'&&<option value="owner">Owner</option>}
+          </Select>}</td>
+          <td>{!self && canEditThis && <button className="danger-action" disabled={busyId===m.user_id} onClick={()=>removeMember(m)}><Trash2 size={15}/>{busyId===m.user_id?'Working…':'Remove'}</button>}</td>
+        </tr>
+      ); })}</tbody>
+    </table></div>}
+  </section>;
+}
 
 function PageTabs({items,active,onChange}:{items:{id:string;label:string}[];active:string;onChange:(id:string)=>void}) {
  return <div className="page-tabs" role="tablist">{items.map(v=><button key={v.id} type="button" role="tab" aria-selected={active===v.id} className={active===v.id?'page-tab active':'page-tab'} onClick={()=>onChange(v.id)}>{v.label}</button>)}</div>;

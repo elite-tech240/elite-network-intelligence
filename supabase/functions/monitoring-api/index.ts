@@ -923,6 +923,79 @@ async function handle(req: Request): Promise<Response> {
     return json({ ok: true, email, role });
   }
 
+  if (req.method === "GET" && path === "/team/members") {
+    const organizationId = url.searchParams.get("organization_id") || "";
+    await requireMember(req, organizationId, ["owner", "admin"]);
+    // list_organization_members checks auth.uid() itself, so it must run as the calling user,
+    // not as the service role (which has no auth.uid() and would always fail that check).
+    const userClient = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+      global: { headers: { Authorization: req.headers.get("Authorization") || "" } },
+      auth: { persistSession: false, autoRefreshToken: false },
+    });
+    const { data, error } = await userClient.rpc("list_organization_members", { p_org: organizationId });
+    if (error) return fail("Could not load the member list", 500);
+    return json({ members: data || [] });
+  }
+
+  if (req.method === "POST" && path === "/team/members/role") {
+    const body = await readJson(req);
+    const organizationId = String(body.organization_id || "");
+    const targetUserId = String(body.user_id || "");
+    const newRole = String(body.role || "");
+    if (!["owner", "admin", "operator", "viewer"].includes(newRole)) return fail("Invalid workspace role");
+    const { user, role: callerRole } = await requireMember(req, organizationId, ["owner", "admin"]);
+    if (targetUserId === user.id) return fail("You cannot change your own role", 400);
+    const { data: target } = await admin.from("organization_members").select("role").eq("organization_id", organizationId).eq("user_id", targetUserId).maybeSingle();
+    if (!target) return fail("That person is not a member of this workspace", 404);
+    if (callerRole === "admin") {
+      if (["owner", "admin"].includes(target.role)) return fail("Only the owner can change an admin's role", 403);
+      if (["owner", "admin"].includes(newRole)) return fail("Only the owner can grant admin access", 403);
+    }
+    if (target.role === "owner" && newRole !== "owner") {
+      const { count } = await admin.from("organization_members").select("user_id", { count: "exact", head: true }).eq("organization_id", organizationId).eq("role", "owner");
+      if ((count || 0) <= 1) return fail("A workspace needs at least one owner", 409);
+    }
+    const { error } = await admin.from("organization_members").update({ role: newRole }).eq("organization_id", organizationId).eq("user_id", targetUserId);
+    if (error) return fail("Could not update that member's role", 500);
+    await audit(organizationId, "user", user.id, "update_member_role", "organization_member", targetUserId, { role: newRole });
+    return json({ ok: true, user_id: targetUserId, role: newRole });
+  }
+
+  if (req.method === "POST" && path === "/team/members/remove") {
+    const body = await readJson(req);
+    const organizationId = String(body.organization_id || "");
+    const targetUserId = String(body.user_id || "");
+    const { user, role: callerRole } = await requireMember(req, organizationId, ["owner", "admin"]);
+    if (targetUserId === user.id) return fail("You cannot remove yourself from the workspace", 400);
+    const { data: target } = await admin.from("organization_members").select("role").eq("organization_id", organizationId).eq("user_id", targetUserId).maybeSingle();
+    if (!target) return fail("That person is not a member of this workspace", 404);
+    if (callerRole === "admin" && ["owner", "admin"].includes(target.role)) return fail("Only the owner can remove an owner or admin", 403);
+    if (target.role === "owner") {
+      const { count } = await admin.from("organization_members").select("user_id", { count: "exact", head: true }).eq("organization_id", organizationId).eq("role", "owner");
+      if ((count || 0) <= 1) return fail("A workspace needs at least one owner", 409);
+    }
+    const { error } = await admin.from("organization_members").delete().eq("organization_id", organizationId).eq("user_id", targetUserId);
+    if (error) return fail("Could not remove that member", 500);
+    await audit(organizationId, "user", user.id, "remove_member", "organization_member", targetUserId, {});
+    return json({ ok: true, user_id: targetUserId });
+  }
+
+  if (req.method === "POST" && path === "/auth/reset-password") {
+    const body = await readJson(req);
+    const email = String(body.email || "").trim().toLowerCase();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return fail("Enter a valid email address");
+    // Reject up front for an email with no account, rather than the usual Supabase default of
+    // silently "succeeding" either way - the person explicitly wants the honest answer here,
+    // trading the (minor, since this is an internal tool, not a public signup page) email-
+    // enumeration risk for clearer feedback when someone mistypes their work email.
+    const { data: exists, error: existsError } = await admin.rpc("public_user_exists", { p_email: email });
+    if (existsError) return fail("Could not check that email right now", 500);
+    if (!exists) return fail("No account found with that email", 404);
+    const { error } = await admin.auth.resetPasswordForEmail(email, { redirectTo: APP_URL });
+    if (error) return fail("Could not send the reset email", 502);
+    return json({ ok: true });
+  }
+
   // ---- Monitoring features used by the dashboard --------------------------------------------
   if (req.method === "POST" && path === "/uptime-checks/run") {
     const body = await readJson(req);
