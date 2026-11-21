@@ -1,5 +1,18 @@
 import { createClient, type SupabaseClient } from '@supabase/supabase-js';
 
+// An invite or password-reset email lands here with #access_token=...&type=invite (or
+// type=recovery) in the URL hash. The supabase-js client below auto-detects that hash and
+// silently creates a session from it (detectSessionInUrl defaults to true) - but that just
+// signs the person in with no password set; nothing shows them a "set your password" screen.
+// We have to read the hash ourselves, before createClient() gets a chance to consume/clear it.
+export const pendingAuthAction: 'invite' | 'recovery' | null = (() => {
+  if (typeof window === 'undefined') return null;
+  const hash = window.location.hash;
+  if (hash.includes('type=invite')) return 'invite';
+  if (hash.includes('type=recovery')) return 'recovery';
+  return null;
+})();
+
 const url = import.meta.env.VITE_SUPABASE_URL as string | undefined;
 const key = import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined;
 export const configured = Boolean(url && key && !url.includes('YOUR_PROJECT') && !key.includes('YOUR_'));

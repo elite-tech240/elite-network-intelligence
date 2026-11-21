@@ -910,7 +910,10 @@ async function handle(req: Request): Promise<Response> {
     const member = await membership(user.id, organizationId);
     if (!member || !["owner", "admin"].includes(member.role)) return fail("Only owners and admins can invite members", 403);
     if (member.role === "admin" && role === "admin") return fail("Only the owner can grant admin access", 403);
-    const { data: inviteData, error: inviteError } = await admin.auth.admin.inviteUserByEmail(email);
+    // redirectTo matters: without it Supabase falls back to the Site URL configured in the
+    // Auth dashboard, which may not point anywhere that shows a "set your password" screen -
+    // the invited person would otherwise land signed-in-but-passwordless on a generic page.
+    const { data: inviteData, error: inviteError } = await admin.auth.admin.inviteUserByEmail(email, { redirectTo: APP_URL });
     if (inviteError || !inviteData.user) return fail("Invitation could not be sent. Check Auth email/SMTP settings or whether this user already exists.", 502);
     const { error: memberError } = await admin.from("organization_members").insert({
       organization_id: organizationId, user_id: inviteData.user.id, role,

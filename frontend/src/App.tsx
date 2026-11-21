@@ -6,7 +6,7 @@ type Device = { id: string; hostname: string; ip_address: string | null; status:
 type Site = { id: string; name: string; location: string | null };
 type Net = { id: string; name: string; cidr: string | null; site_id: string };
 type Membership = { organization_id: string; role: 'owner' | 'admin' | 'operator' | 'viewer'; organizations?: { id: string; name: string }[] | null };
-import { supabase, configured, apiUrl, fmtBps, LATEST_AGENT_VERSION, SELF_UPDATE_FROM, versionAtLeast, publishedAgentVersion } from './lib';
+import { supabase, configured, apiUrl, fmtBps, LATEST_AGENT_VERSION, SELF_UPDATE_FROM, versionAtLeast, publishedAgentVersion, pendingAuthAction } from './lib';
 import { AgentInstaller } from './AgentInstaller';
 import { Toaster, ConfirmHost, Flash, confirmDialog, toast, usePrefs, tr, CommandPalette, Drawer, Skeleton, EmptyState, useTable, Th, Pager, Checklist, Select, Counter, Modal, type Command, type Prefs } from './ui';
 import { LineChart, type Point } from './Chart';
@@ -46,6 +46,25 @@ export default function App() {
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [resetMode, setResetMode] = useState(false);
+  // Invite/recovery links land here signed in already (supabase-js reads the #access_token
+  // hash itself) but with no password set yet - this flag keeps them on a "set a password"
+  // screen instead of dropping them straight into the dashboard or bouncing to plain sign-in.
+  const [authAction, setAuthAction] = useState(pendingAuthAction);
+  const [newAuthPassword, setNewAuthPassword] = useState('');
+  const [newAuthPassword2, setNewAuthPassword2] = useState('');
+  const [authActionBusy, setAuthActionBusy] = useState(false);
+  const [authActionError, setAuthActionError] = useState('');
+  const setAccountPassword = async (e: FormEvent) => {
+    e.preventDefault();
+    if (!supabase) return;
+    if (newAuthPassword.length < 6) { setAuthActionError('Password must be at least 6 characters.'); return; }
+    if (newAuthPassword !== newAuthPassword2) { setAuthActionError('Passwords do not match.'); return; }
+    setAuthActionBusy(true); setAuthActionError('');
+    const { error } = await supabase.auth.updateUser({ password: newAuthPassword });
+    setAuthActionBusy(false);
+    if (error) { setAuthActionError(error.message); return; }
+    setAuthAction(null); setNewAuthPassword(''); setNewAuthPassword2(''); toast('Password set. Welcome!');
+  };
   const [prefs, setPrefs] = usePrefs();
   const [palette, setPalette] = useState(false);
   const lang = prefs.lang;
@@ -159,6 +178,7 @@ export default function App() {
   if (!configured) return <AuthScreen configured={false} email={email} setEmail={setEmail} password={password} setPassword={setPassword} showPassword={showPassword} setShowPassword={setShowPassword} busy={false} error="" notice="" resetMode={false} setResetMode={() => {}} onSubmit={e => e.preventDefault()} />;
   if (!authReady) return <div className="auth-screen"><div className="auth-card"><div className="brand-mark auth-mark"><img src="/elite-mark.svg" alt="" /></div><p className="auth-subtitle">Loading secure session…</p></div></div>;
   if (!session) return <AuthScreen configured email={email} setEmail={setEmail} password={password} setPassword={setPassword} showPassword={showPassword} setShowPassword={setShowPassword} busy={busy} error={authError} notice={notice} resetMode={resetMode} setResetMode={setResetMode} onSubmit={resetMode ? sendReset : signIn} />;
+  if (authAction) return <SetPasswordScreen action={authAction} password={newAuthPassword} setPassword={setNewAuthPassword} password2={newAuthPassword2} setPassword2={setNewAuthPassword2} busy={authActionBusy} error={authActionError} onSubmit={setAccountPassword} />;
 
   return <div className="shell"><div className="fx-tape" aria-hidden="true"/>
     <aside className="sidebar">
@@ -235,6 +255,22 @@ export default function App() {
     <CommandPalette open={palette} onClose={() => setPalette(false)} commands={commands} lang={lang}/>
     <Toaster/><ConfirmHost lang={lang}/>
   </div>;
+}
+
+function SetPasswordScreen({action, password, setPassword, password2, setPassword2, busy, error, onSubmit}:{action:'invite'|'recovery';password:string;setPassword:(v:string)=>void;password2:string;setPassword2:(v:string)=>void;busy:boolean;error:string;onSubmit:(e:FormEvent)=>void}) {
+  return <div className="auth-screen"><div className="auth-card"><div className="auth-brand"><div className="brand-mark auth-mark"><img src="/elite-mark.svg" alt="" /></div><div><b>ELITE</b><span>NETWORK INTELLIGENCE</span></div></div><div className="auth-kicker">NETWORK OPERATIONS CENTER</div>
+    <h1>{action === 'invite' ? 'Welcome to Elite' : 'Choose a new password'}</h1>
+    <p className="auth-subtitle">{action === 'invite' ? "You've been invited to a workspace. Set a password to finish creating your account." : 'Set a new password for your account.'}</p>
+    <form onSubmit={onSubmit} className="auth-form">
+      <label htmlFor="new-password">New password</label>
+      <input id="new-password" type="password" autoComplete="new-password" placeholder="At least 6 characters" value={password} onChange={e=>setPassword(e.target.value)} required minLength={6}/>
+      <label htmlFor="new-password-2">Confirm password</label>
+      <input id="new-password-2" type="password" autoComplete="new-password" placeholder="Re-enter the password" value={password2} onChange={e=>setPassword2(e.target.value)} required minLength={6}/>
+      {error && <div className="error-banner">{error}</div>}
+      <button className="auth-submit" disabled={busy}>{busy ? 'Please wait…' : 'Set password and continue'} <ArrowUpRight size={16}/></button>
+    </form>
+    <div className="auth-foot"><ShieldCheck size={15}/> Protected by secure authentication · No public sign-up</div>
+  </div></div>;
 }
 
 function AuthScreen({configured, email, setEmail, password, setPassword, showPassword, setShowPassword, busy, error, notice, resetMode, setResetMode, onSubmit}:{configured:boolean;email:string;setEmail:(v:string)=>void;password:string;setPassword:(v:string)=>void;showPassword:boolean;setShowPassword:(v:boolean)=>void;busy:boolean;error:string;notice:string;resetMode:boolean;setResetMode:(v:boolean)=>void;onSubmit:(e:FormEvent)=>void}) {
