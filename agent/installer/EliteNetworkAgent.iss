@@ -8,7 +8,7 @@ AppPublisher=Elite Network Intelligence
 DefaultDirName={autopf}\Elite Network Intelligence\Agent
 DefaultGroupName=Elite Network Intelligence
 OutputDir=..\dist
-OutputBaseFilename=EliteNetworkAgent-Setup
+OutputBaseFilename=EliteNetworkAgent-Setup-{#AppVersion}
 SetupIconFile=elite-network-icon.ico
 ; Elite branding: charcoal panels, the lockup on the welcome and finished pages,
 ; the mark in the corner of every other page. 2x files cover high-DPI displays.

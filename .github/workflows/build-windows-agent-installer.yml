@@ -112,7 +112,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: EliteNetworkAgent-Windows-Installer
-          path: agent/dist/EliteNetworkAgent-Setup.exe
+          path: agent/dist/EliteNetworkAgent-Setup-*.exe
           if-no-files-found: error
 
   publish-windows-release:
@@ -148,7 +148,7 @@ jobs:
 
             Agents from v0.5.0 can be updated from the web app; older ones need this installer run once by hand.
           files: |
-            release-assets/EliteNetworkAgent-Setup.exe
+            release-assets/EliteNetworkAgent-Setup-*.exe
             release-assets/install.sh
           overwrite_files: true
           make_latest: true
