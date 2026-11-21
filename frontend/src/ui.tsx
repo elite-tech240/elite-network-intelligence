@@ -69,10 +69,10 @@ export function ConfirmHost({ lang }: { lang: Prefs['lang'] }) {
 }
 
 /* ---------- custom select (drop-in for <select>) ---------- */
-type Opt = { value: string; label: ReactNode; disabled?: boolean };
-function flatOptions(ch: ReactNode): Opt[] {
+type Opt = { value: string; label: ReactNode; disabled?: boolean; group?: string };
+function flatOptions(ch: ReactNode, group?: string): Opt[] {
   const out: Opt[] = [];
-  Children.forEach(ch, c => { if (!isValidElement(c)) return; const p: any = c.props; if (c.type === 'option') out.push({ value: String(p.value ?? p.children), label: p.children, disabled: p.disabled }); else out.push(...flatOptions(p.children)); });
+  Children.forEach(ch, c => { if (!isValidElement(c)) return; const p: any = c.props; if (c.type === 'option') out.push({ value: String(p.value ?? p.children), label: p.children, disabled: p.disabled, group }); else out.push(...flatOptions(p.children, c.type === 'optgroup' ? String(p.label) : group)); });
   return out;
 }
 export function Select({ value, onChange, children, className = '', disabled, id }: { value: string | number; onChange: (e: { target: { value: string } }) => void; children: ReactNode; className?: string; disabled?: boolean; id?: string }) {
@@ -85,7 +85,7 @@ export function Select({ value, onChange, children, className = '', disabled, id
   }, [open]);
   const toggle = () => {
     if (disabled) return;
-    if (!open && box.current) { const r = box.current.getBoundingClientRect(); const need = Math.min(opts.length * 38 + 14, 280); setUp(window.innerHeight - r.bottom < need && r.top > window.innerHeight - r.bottom); setHi(Math.max(0, opts.findIndex(o => o.value === String(value)))); }
+    if (!open && box.current) { const r = box.current.getBoundingClientRect(); const need = Math.min(opts.length * 38 + 14 + new Set(opts.map(o => o.group).filter(Boolean)).size * 30, 340); setUp(window.innerHeight - r.bottom < need && r.top > window.innerHeight - r.bottom); setHi(Math.max(0, opts.findIndex(o => o.value === String(value)))); }
     setOpen(o => !o);
   };
   const pick = (o?: Opt) => { if (!o || o.disabled) return; onChange({ target: { value: o.value } }); setOpen(false); };
@@ -94,7 +94,7 @@ export function Select({ value, onChange, children, className = '', disabled, id
       onKeyDown={e => { if (e.key === 'Escape') setOpen(false); else if (e.key === 'ArrowDown') { e.preventDefault(); if (!open) toggle(); else setHi(h => Math.min(h + 1, opts.length - 1)); } else if (e.key === 'ArrowUp') { e.preventDefault(); setHi(h => Math.max(h - 1, 0)); } else if (e.key === 'Enter' && open) { e.preventDefault(); pick(opts[hi]); } }}>
       <span>{cur?.label ?? ''}</span><ChevronDown size={16}/>
     </button>
-    {open && <ul className={up ? 'select-menu up' : 'select-menu'} role="listbox">{opts.map((o, i) => <li key={o.value + i} role="option" aria-selected={o.value === String(value)} className={`${i === hi ? 'hi' : ''} ${o.value === String(value) ? 'sel' : ''} ${o.disabled ? 'dis' : ''}`} onMouseEnter={() => setHi(i)} onClick={() => pick(o)}><span>{o.label}</span>{o.value === String(value) && <Check size={15}/>}</li>)}</ul>}
+    {open && <ul className={up ? 'select-menu up' : 'select-menu'} role="listbox">{opts.map((o, i) => [o.group && o.group !== opts[i - 1]?.group ? <li key={'g' + o.group} className="select-group" role="presentation" onClick={e => e.preventDefault()}>{o.group}</li> : null, <li key={o.value + i} role="option" aria-selected={o.value === String(value)} className={`${i === hi ? 'hi' : ''} ${o.value === String(value) ? 'sel' : ''} ${o.disabled ? 'dis' : ''}`} onMouseEnter={() => setHi(i)} onClick={e => { e.preventDefault(); pick(o); }}><span>{o.label}</span>{o.value === String(value) && <Check size={15}/>}</li>])}</ul>}
   </div>;
 }
 
