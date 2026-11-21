@@ -47,6 +47,7 @@ export function VirtualizationPage({ devices, sites, organizationId, accessToken
   const [site, setSite] = useState(sites[0]?.id ?? '');
   const [token, setToken] = useState(''); const [expires, setExpires] = useState('');
   const [esxiHost, setEsxiHost] = useState(''); const [busy, setBusy] = useState(false); const [error, setError] = useState('');
+  const [shell, setShell] = useState<'powershell' | 'bash'>('powershell');
   const siteId = site || sites[0]?.id || '';
 
   const generate = async () => {
@@ -58,8 +59,14 @@ export function VirtualizationPage({ devices, sites, organizationId, accessToken
     } catch (e) { setError((e as Error).message); } finally { setBusy(false); }
   };
 
+  const vars: [string, string][] = [
+    ['ELITE_API_URL', apiUrl], ['ELITE_SITE_ID', siteId], ['ELITE_ENROLLMENT_TOKEN', token],
+    ['ESXI_HOST', esxiHost], ['ESXI_USER', 'root'], ['ESXI_PASSWORD', '...'],
+  ];
   const command = token && esxiHost
-    ? `ELITE_API_URL='${apiUrl}' ELITE_SITE_ID='${siteId}' ELITE_ENROLLMENT_TOKEN='${token}' ESXI_HOST='${esxiHost}' ESXI_USER='root' ESXI_PASSWORD='...' python3 esxi_connector.py`
+    ? shell === 'powershell'
+      ? vars.map(([k, v]) => `$env:${k}='${v}'`).join('; ') + '; python esxi_connector.py'
+      : vars.map(([k, v]) => `${k}='${v}'`).join(' ') + ' python3 esxi_connector.py'
     : '';
 
   return <div className="sites-workspace">
@@ -84,6 +91,8 @@ export function VirtualizationPage({ devices, sites, organizationId, accessToken
           {token && !esxiHost && <p className="muted">Enter the ESXi host's IP or hostname in step 1.</p>}
           {token && esxiHost && <>
             <p className="muted">Download <code>agent/esxi_connector.py</code> from the repo (needs <code>pip install pyvmomi requests</code>), then run on a machine with network access to the host:</p>
+            <div className="os-tabs" role="tablist">{([['powershell', 'Windows (PowerShell)'], ['bash', 'Linux / macOS (bash)']] as const).map(([id, label]) =>
+              <button key={id} type="button" role="tab" aria-selected={shell === id} className={shell === id ? 'os-tab active' : 'os-tab'} onClick={() => setShell(id)}>{label}</button>)}</div>
             <div className="cmd-box"><code>{command}</code></div>
             <div className="installer-row"><CopyButton text={command}/></div>
             <p className="muted">Replace <code>ESXI_PASSWORD</code> with the host's real root (or read-only) password — it's only sent to the ESXi host itself, never to Elite. The host and every VM on it will appear below within a minute.</p>
