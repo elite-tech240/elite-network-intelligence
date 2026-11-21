@@ -798,3 +798,29 @@ body.modal-open{overflow:hidden}
 .site-foot{display:flex;justify-content:flex-end;gap:8px;margin-top:auto;padding:12px 16px;border-top:1px solid var(--stroke)}
 .site-foot button{height:34px!important;padding:0 12px;font-size:var(--fs-sm)!important;gap:6px}
 .modal button:focus-visible{outline:2px solid #ff9a5c;outline-offset:2px}
+
+/* v1.8 topbar: alerts bell dropdown + account menu (previously dead icons),
+   and a less static "there's something open" dot. */
+.bell-wrap,.acct-wrap{position:relative}
+.acct-trigger{cursor:pointer;border:0}
+@keyframes dot-pulse{0%,100%{box-shadow:0 0 0 0 #f3a44e66}50%{box-shadow:0 0 0 4px #f3a44e00}}
+.icon-btn i,.nav-dot{animation:dot-pulse 2s ease-in-out infinite}
+.bell-menu,.acct-menu{position:absolute;top:calc(100% + 10px);right:0;width:300px;background:#1f1f20;border:1px solid #363637;border-radius:10px;box-shadow:0 12px 30px #0006;z-index:40;overflow:hidden}
+.bell-menu-head,.acct-menu-head{padding:12px 14px;border-bottom:1px solid #2d2d2e;display:flex;align-items:center;justify-content:space-between;gap:8px}
+.acct-menu-head{flex-direction:column;align-items:flex-start;gap:2px}
+.acct-menu-head b{font-size:12px;word-break:break-all}
+.acct-menu-head small{color:#8493aa}
+.bell-item{display:flex;align-items:flex-start;gap:9px;width:100%;padding:10px 14px;border:0;background:none;text-align:left;color:#dce6f5;cursor:pointer;font:inherit}
+.bell-item:hover{background:#272728}
+.bell-item b{display:block;font-size:12px;font-weight:600;color:#e8edf7}
+.bell-item small{display:block;font-size:11px;color:#7e8da5;margin-top:2px}
+.bell-sev{width:7px;height:7px;border-radius:50%;margin-top:5px;flex-shrink:0;background:#71819a}
+.bell-sev.warning{background:#f3a44e}
+.bell-sev.critical{background:#e89aaa}
+.bell-sev.info{background:#72b3ff}
+.bell-empty{padding:16px 14px;color:#73839b;font-size:12px;margin:0}
+.bell-viewall{width:100%;padding:11px 14px;border:0;border-top:1px solid #2d2d2e;background:none;color:#75b5ff;font:500 12px 'DM Sans';cursor:pointer;text-align:center}
+.bell-viewall:hover{background:#272728}
+.ws-item.danger{color:#e89aaa}
+.ws-item.danger:hover{background:#2d2024}
+@media(prefers-reduced-motion:reduce){.icon-btn i,.nav-dot{animation:none}}

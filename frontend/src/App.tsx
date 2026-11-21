@@ -51,6 +51,17 @@ export default function App() {
   const lang = prefs.lang;
   const [wsOpen, setWsOpen] = useState(false); const wsRef = useRef<HTMLDivElement>(null);
   useEffect(() => { if (!wsOpen) return; const off = (e: MouseEvent) => { if (!wsRef.current?.contains(e.target as Node)) setWsOpen(false); }; document.addEventListener('mousedown', off); return () => document.removeEventListener('mousedown', off); }, [wsOpen]);
+  const [bellOpen, setBellOpen] = useState(false); const bellRef = useRef<HTMLDivElement>(null);
+  useEffect(() => { if (!bellOpen) return; const off = (e: MouseEvent) => { if (!bellRef.current?.contains(e.target as Node)) setBellOpen(false); }; document.addEventListener('mousedown', off); return () => document.removeEventListener('mousedown', off); }, [bellOpen]);
+  const [acctOpen, setAcctOpen] = useState(false); const acctRef = useRef<HTMLDivElement>(null);
+  useEffect(() => { if (!acctOpen) return; const off = (e: MouseEvent) => { if (!acctRef.current?.contains(e.target as Node)) setAcctOpen(false); }; document.addEventListener('mousedown', off); return () => document.removeEventListener('mousedown', off); }, [acctOpen]);
+  const [recentAlerts, setRecentAlerts] = useState<{ id: string; title: string; severity: string; triggered_at: string }[]>([]);
+  useEffect(() => {
+    if (!supabase || !membership) return;
+    const orgId = membership.organization_id;
+    const load = () => { supabase!.from('alert_events').select('id,title,severity,triggered_at').eq('organization_id', orgId).in('status', ['open', 'acknowledged']).order('triggered_at', { ascending: false }).limit(5).then(({ data }) => setRecentAlerts(data ?? [])); };
+    load(); const timer = window.setInterval(load, 20000); return () => window.clearInterval(timer);
+  }, [membership?.organization_id]);
   const orgOf = (m: Membership | null) => { const o: any = m?.organizations; return (Array.isArray(o) ? o[0]?.name : o?.name) ?? 'Workspace'; };
   const switchOrg = (m: Membership) => { activeOrgRef.current = m.organization_id; setMembership(m); setPage('Overview'); };
   const createWs = async (e: FormEvent) => {
@@ -167,7 +178,17 @@ export default function App() {
       <div className="sidebar-bottom"><div className="profile"><div className="avatar">{(session.user.email?.[0] ?? 'U').toUpperCase()}</div><div><b title={session.user.email ?? ""}>{session.user.email}</b><small>{membership?.role ?? 'No role assigned'}</small></div><button className="mini-icon" title="Sign out" onClick={signOut}><LogOut size={15}/></button></div></div>
     </aside>
     <main className="main">
-      <header className="topbar"><div className="crumb">{tr(lang, 'Workspace')} <span>/</span> <b>{tr(lang, page)}</b></div><div className="top-actions"><button className="search search-btn" onClick={() => setPalette(true)} aria-label="Open command palette"><Search size={15}/><span>{tr(lang, 'Search or jump to…')}</span><kbd>Ctrl K</kbd></button><button className="icon-btn" aria-label="Toggle theme" title="Theme" onClick={() => setPrefs({ theme: prefs.theme === 'dark' ? 'light' : 'dark' })}>{prefs.theme === 'dark' ? <Sun size={18}/> : <Moon size={18}/>}</button><button className="icon-btn" aria-label="Language" title="العربية / English" onClick={() => setPrefs({ lang: prefs.lang === 'en' ? 'ar' : 'en' })}><Languages size={18}/></button><button className="icon-btn" aria-label="Alerts" onClick={() => go('Alerts')}><Bell size={18}/>{openAlerts > 0 && <i/>}</button><div className="avatar small">{(session.user.email?.[0] ?? 'U').toUpperCase()}</div></div></header>
+      <header className="topbar"><div className="crumb">{tr(lang, 'Workspace')} <span>/</span> <b>{tr(lang, page)}</b></div><div className="top-actions"><button className="search search-btn" onClick={() => setPalette(true)} aria-label="Open command palette"><Search size={15}/><span>{tr(lang, 'Search or jump to…')}</span><kbd>Ctrl K</kbd></button><button className="icon-btn" aria-label="Toggle theme" title="Theme" onClick={() => setPrefs({ theme: prefs.theme === 'dark' ? 'light' : 'dark' })}>{prefs.theme === 'dark' ? <Sun size={18}/> : <Moon size={18}/>}</button><button className="icon-btn" aria-label="Language" title="العربية / English" onClick={() => setPrefs({ lang: prefs.lang === 'en' ? 'ar' : 'en' })}><Languages size={18}/></button><div className="bell-wrap" ref={bellRef}><button className="icon-btn" aria-label="Alerts" aria-haspopup="menu" aria-expanded={bellOpen} onClick={() => setBellOpen(o => !o)}><Bell size={18}/>{openAlerts > 0 && <i/>}</button>
+        {bellOpen && <div className="bell-menu" role="menu"><div className="bell-menu-head"><b>Alerts</b><span className="muted">{openAlerts} open</span></div>
+          {recentAlerts.length ? recentAlerts.map(a => <button key={a.id} role="menuitem" className="bell-item" onClick={() => { setBellOpen(false); go('Alerts'); }}><span className={`bell-sev ${a.severity}`}/><span><b>{a.title}</b><small>{new Date(a.triggered_at).toLocaleString()}</small></span></button>) : <p className="bell-empty">Nothing open right now.</p>}
+          <button role="menuitem" className="bell-viewall" onClick={() => { setBellOpen(false); go('Alerts'); }}>View all alerts</button>
+        </div>}</div>
+      <div className="acct-wrap" ref={acctRef}><button className="avatar small acct-trigger" aria-haspopup="menu" aria-expanded={acctOpen} onClick={() => setAcctOpen(o => !o)}>{(session.user.email?.[0] ?? 'U').toUpperCase()}</button>
+        {acctOpen && <div className="acct-menu" role="menu"><div className="acct-menu-head"><b>{session.user.email}</b><small>{membership?.role ?? 'No role assigned'}</small></div>
+          <button role="menuitem" className="ws-item" onClick={() => { setAcctOpen(false); go('Settings'); }}><Settings size={16}/><span>Settings</span></button>
+          <div className="ws-sep"/>
+          <button role="menuitem" className="ws-item danger" onClick={() => { setAcctOpen(false); signOut(); }}><LogOut size={16}/><span>Sign out</span></button>
+        </div>}</div></div></header>
       <section className="content">
         <div className="page-heading"><div><div className="eyebrow">{tr(lang, 'NETWORK OPERATIONS CENTER')}</div><h1>{title}</h1><p>{pageDescription(page)}</p></div></div>
         {notice && <div className="notice-banner">{notice}<button onClick={() => setNotice('')}>Dismiss</button></div>}
