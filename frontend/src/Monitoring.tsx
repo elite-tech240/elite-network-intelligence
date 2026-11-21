@@ -217,7 +217,8 @@ export function DeviceDetail({ devices, initialId }: { devices: Dev[]; initialId
   }, [id]);
   useEffect(() => { void loadUpgrade(); }, [loadUpgrade]);
   useTick(() => void loadUpgrade(), 10000, [loadUpgrade]);
-  const outdated = dev?.agent_version && dev.agent_version !== latestVersion;
+  // an agent that never reported its version is running something older than the published build
+  const outdated = !!dev && dev.agent_version !== latestVersion;
   const inFlight = upgrade && ['queued', 'delivered', 'running'].includes(upgrade.status);
   const startUpgrade = async () => {
     if (!supabase || !id) return;
@@ -238,7 +239,7 @@ export function DeviceDetail({ devices, initialId }: { devices: Dev[]; initialId
       {inFlight
         ? <small className="txt-warn">{upgrade.status === 'running' ? `installing ${latestVersion}…` : `update queued (${latestVersion})`}</small>
         : outdated
-          ? <><small className="txt-warn">update available ({latestVersion})</small><button className="primary-action sm agent-update" onClick={startUpgrade} disabled={busy}>{busy ? 'Sending…' : 'Update agent'}</button></>
+          ? <><small className="txt-warn">{dev?.agent_version ? `update available (${latestVersion})` : `version unknown · install ${latestVersion}`}</small><button className="primary-action sm agent-update" onClick={startUpgrade} disabled={busy}>{busy ? 'Sending…' : 'Update agent'}</button></>
           : upgrade?.status === 'failed'
             ? <small className="txt-bad">last update failed: {upgrade.error ?? 'unknown error'}</small>
             : <small className="txt-ok">up to date</small>}</div></div>
