@@ -28,7 +28,7 @@ export function LineChart({ points, color = '#f5630f', height = 120, max, unit =
   const fmt = format ?? ((v: number) => v.toFixed(1) + unit);
   if (!view) return <div className="chart-empty">No data in this period yet.</div>;
   return <div className="chart-box">
-    <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" role="img" aria-label="Metric trend" style={{ height }}>
+    <svg viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" role="img" aria-label="Metric trend" className="chart-svg" style={{ height }}>
       {[0.25, 0.5, 0.75].map(f => <line key={f} x1={P} x2={W - P} y1={H - P - f * (H - 2 * P)} y2={H - P - f * (H - 2 * P)} stroke="#2b3034" strokeWidth="1" vectorEffect="non-scaling-stroke"/>)}
       <path d={view.area} fill={color} opacity=".14"/>
       <path d={view.d} fill="none" stroke={color} strokeWidth="2" vectorEffect="non-scaling-stroke" strokeLinejoin="round"/>
