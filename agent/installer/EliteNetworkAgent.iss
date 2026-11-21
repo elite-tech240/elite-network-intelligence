@@ -1,5 +1,5 @@
 #define AppName "Elite Network Intelligence Agent"
-#define AppVersion "0.4.0"
+#define AppVersion "0.5.0"
 [Setup]
 AppId={{A1D3D4B1-93F1-4C86-9F15-8B91E84E1A20}
 AppName={#AppName}
@@ -10,6 +10,18 @@ DefaultGroupName=Elite Network Intelligence
 OutputDir=..\dist
 OutputBaseFilename=EliteNetworkAgent-Setup
 SetupIconFile=elite-network-icon.ico
+; Elite branding: charcoal panels, the lockup on the welcome and finished pages,
+; the mark in the corner of every other page. 2x files cover high-DPI displays.
+WizardImageFile=wiz-banner.bmp,wiz-banner@2x.bmp
+WizardSmallImageFile=wiz-small.bmp,wiz-small@2x.bmp
+WizardImageAlphaFormat=none
+AppCopyright=Elite Tech
+AppPublisherURL=https://elite-tech-eg.vercel.app
+AppSupportURL=https://elite-tech-eg.vercel.app
+SetupMutex=EliteNetworkAgentSetup
+DisableWelcomePage=no
+DisableProgramGroupPage=yes
+ShowLanguageDialog=no
 ArchitecturesInstallIn64BitMode=x64
 PrivilegesRequired=admin
 UninstallDisplayIcon={app}\EliteNetworkAgent.exe
@@ -32,9 +44,10 @@ var
 procedure InitializeWizard();
 begin
   EnrollmentPage := CreateInputQueryPage(wpSelectDir,
-    'Connect this computer to Elite Network Intelligence',
-    'Enter the one-time enrollment details generated in your workspace.',
-    'Use a unique token for each computer. This installer can be reused.');
+    'Connect this computer',
+    'Paste the details from Sites & Networks in your Elite workspace.',
+    'Open the Agent installer tab, pick the site, then Generate install token.' + #13#10 +
+    'Each computer needs its own token, and a token lasts 24 hours.');
   EnrollmentPage.Add('Monitoring API URL:', False);
   EnrollmentPage.Add('One-time enrollment token:', True);
   EnrollmentPage.Add('Site ID:', False);
