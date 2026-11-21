@@ -1,4 +1,5 @@
 import { CSSProperties, Children, ReactNode, isValidElement, useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { AlertTriangle, CheckCircle2, ArrowDown, ArrowUp, Check, ChevronDown, Circle, Search, X } from 'lucide-react';
 
 /* ---------- preferences (theme, language, density, onboarding) ---------- */
@@ -60,11 +61,11 @@ export function ConfirmHost({ lang }: { lang: Prefs['lang'] }) {
   if (!s) return null;
   const done = (v: boolean) => { s.r(v); setS(null); };
   const danger = s.o?.danger ?? /delete|remove|revoke|uninstall|archive/i.test(s.m);
-  return <div className="modal-back" onClick={() => done(false)}><div className="modal" role="alertdialog" aria-modal="true" onClick={e => e.stopPropagation()}>
+  return createPortal(<div className="modal-back" onClick={() => done(false)}><div className="modal confirm-modal" role="alertdialog" aria-modal="true" onClick={e => e.stopPropagation()}>
     <span className={danger ? 'modal-icon danger' : 'modal-icon'}><AlertTriangle size={20}/></span>
     <h3>{s.o?.title ?? tr(lang, 'Are you sure?')}</h3><p>{s.m}</p>
     <div className="modal-actions"><button className="secondary-action" onClick={() => done(false)}>{tr(lang, 'Cancel')}</button><button className={danger ? 'danger-solid' : 'primary-action'} autoFocus onClick={() => done(true)}>{s.o?.confirmText ?? tr(lang, 'Confirm')}</button></div>
-  </div></div>;
+  </div></div>, document.body);
 }
 
 /* ---------- custom select (drop-in for <select>) ---------- */
@@ -193,4 +194,13 @@ export function LongText({ text, lines = 2 }: { text?: string | null; lines?: nu
     <span className="long-text-body">{t}</span>
     {long && <button type="button" className="long-text-toggle" onClick={e => { e.stopPropagation(); setOpen(o => !o); }}>{open ? 'Show less' : 'Show more'}</button>}
   </div>;
+}
+
+/** Centered dialog rendered on document.body so no page layout can trap it. */
+export function Modal({ title, subtitle, icon, onClose, children, width = 480 }: { title: string; subtitle?: string; icon?: ReactNode; onClose: () => void; children: ReactNode; width?: number }) {
+  useEffect(() => { const k = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); }; window.addEventListener('keydown', k); document.body.classList.add('modal-open'); return () => { window.removeEventListener('keydown', k); document.body.classList.remove('modal-open'); }; }, [onClose]);
+  return createPortal(<div className="modal-back" onMouseDown={onClose}><div className="modal form-modal" style={{ width: `min(100%, ${width}px)` }} role="dialog" aria-modal="true" aria-label={title} onMouseDown={e => e.stopPropagation()}>
+    <div className="form-modal-head">{icon && <span className="modal-icon">{icon}</span>}<div><h3>{title}</h3>{subtitle && <p>{subtitle}</p>}</div><button type="button" className="form-modal-close" aria-label="Close" onClick={onClose}><X size={18}/></button></div>
+    {children}
+  </div></div>, document.body);
 }
