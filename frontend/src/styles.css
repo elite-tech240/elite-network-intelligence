@@ -667,8 +667,11 @@ small,.muted{font-size:var(--fs-sm)}
 
 /* v1.5 layout + Virtualization polish */
 /* scrolling: no sideways scroll, page scrolls under a sticky topbar */
-html,body{overflow-x:hidden}
+html{overflow-x:clip}
 .main{overflow-x:clip}
+/* sidebar stays pinned full-height while the page scrolls */
+.shell{align-items:flex-start}
+.sidebar{position:sticky!important;top:0;height:100vh;height:100dvh;align-self:flex-start;overflow-y:auto}
 .topbar{position:sticky;top:0;z-index:40;backdrop-filter:blur(12px)}
 /* the animated top rail must never poke outside its card */
 .esxi-host-card{overflow:hidden!important}
