@@ -433,9 +433,15 @@ function SettingsPage({initialTab,user,membership,accessToken,onSignOut,orgName,
 function TeamInvite({organizationId,role,accessToken}:{organizationId:string;role:Membership['role'];accessToken:string}) { const [email,setEmail]=useState(''),[inviteRole,setInviteRole]=useState('viewer'),[busy,setBusy]=useState(false),[message,setMessage]=useState(''),[error,setError]=useState('');if(!['owner','admin'].includes(role))return null;const invite=async(e:FormEvent)=>{e.preventDefault();if(!apiUrl){setError('VITE_API_URL is not configured.');return;}setBusy(true);setError('');setMessage('');try{const response=await fetch(apiUrl+'/team/invite',{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+accessToken},body:JSON.stringify({organization_id:organizationId,email:email.trim(),role:inviteRole})});const body=await response.json();if(!response.ok)throw new Error(body.detail||'Invite failed');setMessage('Invitation sent to '+body.email);setEmail('');}catch(e){setError(e instanceof Error?e.message:'Invitation failed.');}finally{setBusy(false);}};return <section className="panel settings-card"><div className="settings-icon"><UserRound size={19}/></div><h3>Invite a teammate</h3><p>Invite a teammate by email. Supabase Auth sends the invitation link; the selected role is assigned to this workspace.</p><form className="asset-form" onSubmit={invite}><label>Team member email<input type="email" value={email} onChange={e=>setEmail(e.target.value)} placeholder="colleague@company.com" required/></label><label>Workspace role<Select value={inviteRole} onChange={e=>setInviteRole(e.target.value)}><option value="viewer">Viewer</option><option value="operator">Operator</option>{role==='owner'&&<option value="admin">Admin</option>}</Select></label><Flash kind="error" msg={error}/><Flash kind="success" msg={message}/><button className="primary-action" disabled={busy}>{busy?'Sending…':'Send invitation'}</button></form></section>; }
 
 type TeamMember = { user_id: string; email: string; role: Membership['role']; created_at: string };
+const ROLE_OPTIONS: { value: string; label: string; desc: string }[] = [
+  { value: 'viewer', label: 'Viewer', desc: 'Can view dashboards, devices and alerts.' },
+  { value: 'operator', label: 'Operator', desc: 'Viewer access, plus can manage devices, checks and maintenance.' },
+  { value: 'admin', label: 'Admin', desc: 'Operator access, plus can manage team members and settings.' },
+];
 function TeamMembers({organizationId,role,accessToken,currentUserId}:{organizationId:string;role:Membership['role'];accessToken:string;currentUserId:string}) {
   const [members,setMembers]=useState<TeamMember[]>([]); const [loading,setLoading]=useState(true); const [error,setError]=useState('');
   const [busyId,setBusyId]=useState('');
+  const [editing,setEditing]=useState<TeamMember|null>(null);
   if (!['owner','admin'].includes(role)) return null;
   const load = useCallback(async () => {
     setLoading(true); setError('');
@@ -445,9 +451,9 @@ function TeamMembers({organizationId,role,accessToken,currentUserId}:{organizati
   }, [organizationId, accessToken]);
   useEffect(() => { void load(); }, [load]);
   const changeRole = async (m: TeamMember, newRole: string) => {
-    if (newRole === m.role) return;
+    if (newRole === m.role) { setEditing(null); return; }
     setBusyId(m.user_id); setError('');
-    try { await api('/team/members/role', accessToken, { method: 'POST', body: { organization_id: organizationId, user_id: m.user_id, role: newRole } }); toast('Role updated'); await load(); }
+    try { await api('/team/members/role', accessToken, { method: 'POST', body: { organization_id: organizationId, user_id: m.user_id, role: newRole } }); toast('Role updated'); setEditing(null); await load(); }
     catch (e) { setError(e instanceof Error ? e.message : 'Could not change that role.'); }
     finally { setBusyId(''); }
   };
@@ -467,14 +473,26 @@ function TeamMembers({organizationId,role,accessToken,currentUserId}:{organizati
       <tbody>{members.map(m => { const self = m.user_id === currentUserId; const canEditThis = role === 'owner' || !['owner','admin'].includes(m.role); return (
         <tr key={m.user_id}>
           <td>{m.email}{self ? ' (you)' : ''}</td>
-          <td>{self || !canEditThis ? <span className={m.role==='owner'?'role-badge owner':'role-badge'}>{m.role}</span> : <Select value={m.role} onChange={e=>changeRole(m, e.target.value)} disabled={busyId===m.user_id}>
-            <option value="viewer">Viewer</option><option value="operator">Operator</option>{role==='owner'&&<option value="admin">Admin</option>}{m.role==='owner'&&<option value="owner">Owner</option>}
-          </Select>}</td>
-          <td>{!self && canEditThis && <button className="danger-action" disabled={busyId===m.user_id} onClick={()=>removeMember(m)}><Trash2 size={15}/>{busyId===m.user_id?'Working…':'Remove'}</button>}</td>
+          <td><span className={m.role==='owner'?'role-badge owner':'role-badge'}>{m.role}</span></td>
+          <td>{!self && canEditThis && <div className="row-actions"><button className="mini-icon" title="Edit permissions" disabled={busyId===m.user_id} onClick={()=>setEditing(m)}><Pencil size={15}/></button><button className="mini-icon danger" title="Remove member" disabled={busyId===m.user_id} onClick={()=>removeMember(m)}><Trash2 size={15}/></button></div>}</td>
         </tr>
       ); })}</tbody>
     </table></div>}
+    {editing && <PermissionsModal member={editing} canGrantAdmin={role==='owner'} busy={busyId===editing.user_id} onSave={(newRole)=>changeRole(editing, newRole)} onClose={()=>setEditing(null)}/>}
   </section>;
+}
+function PermissionsModal({member,canGrantAdmin,busy,onSave,onClose}:{member:TeamMember;canGrantAdmin:boolean;busy:boolean;onSave:(role:string)=>void;onClose:()=>void}) {
+  const [picked,setPicked]=useState<string>(member.role);
+  const options = ROLE_OPTIONS.filter(o => o.value !== 'admin' || canGrantAdmin);
+  return <Modal title="Manage permissions" subtitle={member.email} icon={<KeyRound size={17}/>} onClose={onClose}>
+    <div className="permission-list">{options.map(o => (
+      <label key={o.value} className="permission-row">
+        <input type="checkbox" checked={picked===o.value} onChange={()=>setPicked(o.value)}/>
+        <span><b>{o.label}</b><small>{o.desc}</small></span>
+      </label>
+    ))}</div>
+    <div className="modal-actions"><button className="secondary-action" onClick={onClose} disabled={busy}>Cancel</button><button className="primary-action" onClick={()=>onSave(picked)} disabled={busy || picked===member.role}>{busy?'Saving…':'Save changes'}</button></div>
+  </Modal>;
 }
 
 function PageTabs({items,active,onChange}:{items:{id:string;label:string}[];active:string;onChange:(id:string)=>void}) {

@@ -311,7 +311,17 @@ td{font-size:13px}th{font-size:12px}.muted{font-size:12px}.panel-head p,.page-he
 .modal-back{position:fixed;inset:0;z-index:80;background:#050a14b8;display:grid;place-items:center;padding:20px;backdrop-filter:blur(3px)}
 .modal{width:min(100%,420px);padding:24px;border-radius:14px;background:#252526;border:1px solid #2f4764;box-shadow:0 24px 60px #000a}
 .modal h3{margin:0 0 8px;font:600 20px 'Space Grotesk'}.modal p{margin:0 0 20px;color:#b4c3d7;font-size:14px;line-height:1.5}
-.modal-actions{display:flex;justify-content:flex-end;gap:10px}
+.modal-actions{display:flex;justify-content:flex-end;gap:10px;margin-top:4px}
+.row-actions .mini-icon{width:32px;height:32px;border-radius:7px;background:#2a2a2b;border:1px solid #3e3e3f}
+.row-actions .mini-icon:hover{background:#333334;color:#d4deec}
+.row-actions .mini-icon.danger{color:#f0a2a9}
+.row-actions .mini-icon.danger:hover{background:#351e2a;border-color:#713b48}
+.permission-list{display:flex;flex-direction:column;gap:3px;margin-bottom:20px}
+.permission-row{display:flex;align-items:flex-start;gap:11px;padding:11px 10px;border-radius:8px;cursor:pointer}
+.permission-row:hover{background:#2a2a2b}
+.permission-row input{margin-top:3px;width:16px;height:16px;accent-color:#398ce9;flex-shrink:0}
+.permission-row b{display:block;font-size:13px;color:#e2eaf6}
+.permission-row small{display:block;font-size:12px;color:#8495ad;margin-top:2px;line-height:1.5}
 .skeleton{display:grid;gap:10px;padding:14px 4px}.skeleton i{display:block;height:13px;border-radius:6px;background:linear-gradient(90deg,#2e2e2f 25%,#3e3e3f 50%,#2e2e2f 75%);background-size:200% 100%;animation:skel 1.4s infinite}
 @keyframes skel{to{background-position:-200% 0}}
 .empty-state{display:grid;justify-items:center;gap:8px;padding:34px 16px;text-align:center;color:#b4c3d7}.empty-state b{color:#e8edf7;font-size:16px}.empty-state p{margin:0;max-width:380px;font-size:14px}
