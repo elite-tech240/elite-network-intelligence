@@ -1,4 +1,4 @@
-import { Children, ReactNode, isValidElement, useEffect, useMemo, useRef, useState } from 'react';
+import { CSSProperties, Children, ReactNode, isValidElement, useEffect, useMemo, useRef, useState } from 'react';
 import { AlertTriangle, CheckCircle2, ArrowDown, ArrowUp, Check, ChevronDown, Circle, Search, X } from 'lucide-react';
 
 /* ---------- preferences (theme, language, density, onboarding) ---------- */
@@ -181,4 +181,16 @@ export function Checklist({ steps, onDismiss, lang }: { steps: Step[]; onDismiss
     <div className="onboarding-steps">{steps.map(s => s.done
       ? <span key={s.id} className="chip-step done"><CheckCircle2 size={15}/>{s.label}</span>
       : <button key={s.id} className="chip-step" onClick={s.go}><Circle size={15}/>{s.label}</button>)}</div></section>;
+}
+
+/** Long free text in a table cell: wraps (even unbroken strings), clamps to 2 lines, click to expand. */
+export function LongText({ text, lines = 2 }: { text?: string | null; lines?: number }) {
+  const [open, setOpen] = useState(false);
+  const t = text ?? '';
+  if (!t) return <span className="muted">—</span>;
+  const long = t.length > 140;
+  return <div className={open ? 'long-text open' : 'long-text'} style={{ '--lines': lines } as CSSProperties} title={open ? undefined : t}>
+    <span className="long-text-body">{t}</span>
+    {long && <button type="button" className="long-text-toggle" onClick={e => { e.stopPropagation(); setOpen(o => !o); }}>{open ? 'Show less' : 'Show more'}</button>}
+  </div>;
 }

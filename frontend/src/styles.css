@@ -740,3 +740,19 @@ html{overflow-x:clip}
   .esxi-section-head p{flex-basis:100%;margin:0}
   .esxi-section-head{flex-wrap:wrap}
 }
+
+/* v1.6 tables with long text: wrap inside the cell, never push the table sideways */
+.table-wrap{max-width:100%;overflow-x:auto;overscroll-behavior-x:contain}
+.table-wrap table{width:100%}
+td.wrap-cell{white-space:normal!important;min-width:280px;max-width:640px;width:100%;vertical-align:top}
+td{vertical-align:middle}
+tr:has(td.wrap-cell) td{vertical-align:top}
+.long-text{display:grid;gap:6px;justify-items:start}
+.long-text-body{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:var(--lines,2);overflow:hidden;overflow-wrap:anywhere;word-break:break-word;line-height:1.55;white-space:normal}
+.long-text.open .long-text-body{display:block;-webkit-line-clamp:unset}
+.long-text-toggle{padding:0;border:0;background:none;color:#ff9a5c;font:500 var(--fs-xs) 'DM Sans';cursor:pointer}
+.long-text-toggle:hover{color:#ffb98a;text-decoration:underline}
+/* the "last column = actions" rule must not apply to a long-text column */
+.page-panel td.wrap-cell:last-child,.page-panel td.wrap-cell{width:auto;min-width:320px;max-width:none;white-space:normal!important;text-align:start}
+.page-panel table:has(td.wrap-cell:last-child) th:last-child{width:auto;text-align:start;white-space:nowrap}
+.page-panel table:has(td.wrap-cell) td:not(.wrap-cell){width:1%;white-space:nowrap}

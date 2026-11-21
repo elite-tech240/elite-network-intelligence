@@ -2,7 +2,7 @@ import { FormEvent, useCallback, useEffect, useState } from 'react';
 import { supabase, api, fmtBps, fmtUptime, ago, LATEST_AGENT_VERSION, SELF_UPDATE_FROM, versionAtLeast, publishedAgentVersion, type Role } from './lib';
 import { Maximize2 } from 'lucide-react';
 import { LineChart, Sparkline, type Point } from './Chart';
-import { Flash, confirmDialog, Skeleton, Select, toast } from './ui';
+import { Flash, confirmDialog, Skeleton, Select, toast, LongText } from './ui';
 
 type Dev = { id: string; hostname: string; agent_version?: string | null };
 const isOp = (r: Role) => ['owner', 'admin', 'operator'].includes(r);
@@ -44,7 +44,7 @@ export function LogsPage({ organizationId, devices }: { organizationId: string; 
       </div>
       <Flash kind="error" msg={err}/>
       <div className="table-wrap"><table><thead><tr><th>TIME</th><th>DEVICE</th><th>LEVEL</th><th>SOURCE</th><th>MESSAGE</th></tr></thead><tbody>
-        {rows.map(r => <tr key={r.id}><td>{new Date(r.logged_at).toLocaleString()}</td><td>{name(r.device_id)}</td><td><Sev level={r.level}/></td><td>{r.source}{r.event_id ? ` · ${r.event_id}` : ''}</td><td className="wrap-cell">{r.message}</td></tr>)}
+        {rows.map(r => <tr key={r.id}><td>{new Date(r.logged_at).toLocaleString()}</td><td>{name(r.device_id)}</td><td><Sev level={r.level}/></td><td>{r.source}{r.event_id ? ` · ${r.event_id}` : ''}</td><td className="wrap-cell"><LongText text={r.message}/></td></tr>)}
         {!rows.length && <Empty cols={5} text="No logs match. Logs appear once an agent v0.4.0+ is installed and reports warnings or errors."/>}
       </tbody></table></div></section></div>;
 }
@@ -102,7 +102,7 @@ export function ReportsPage({ organizationId, token }: { organizationId: string;
         {r.devices.map((d: any) => <tr key={d.id ?? d.hostname}><td><b>{d.hostname}</b></td><td>{d.availability_percent}%</td><td>{d.cpu_avg ?? '—'}%</td><td>{d.memory_avg ?? '—'}%</td><td>{d.disk_max ?? '—'}%</td><td>{fmtBps(d.net_recv_bps_avg)}</td><td>{fmtBps(d.net_sent_bps_avg)}</td></tr>)}
         {!r.devices.length && <Empty cols={7} text="No devices."/>}</tbody></table></div></section>
       <div className="two-col">
-        <section className="panel page-panel"><div className="panel-head"><div><h3>Alerts</h3><p>{r.alerts.total} in period · {r.alerts.open} open now</p></div></div><div className="table-wrap"><table><tbody>{(r.alerts.top ?? []).map((t: any) => <tr key={t.title}><td>{t.title}</td><td><b>{t.count}</b></td></tr>)}{!r.alerts.top?.length && <Empty cols={2} text="No alerts in this period."/>}</tbody></table></div></section>
+        <section className="panel page-panel"><div className="panel-head"><div><h3>Alerts</h3><p>{r.alerts.total} in period · {r.alerts.open} open now</p></div></div><div className="table-wrap"><table><tbody>{(r.alerts.top ?? []).map((t: any) => <tr key={t.title}><td className="wrap-cell"><LongText text={t.title}/></td><td><b>{t.count}</b></td></tr>)}{!r.alerts.top?.length && <Empty cols={2} text="No alerts in this period."/>}</tbody></table></div></section>
         <section className="panel page-panel"><div className="panel-head"><div><h3>Uptime checks</h3><p>Websites and services</p></div></div><div className="table-wrap"><table><tbody>{(r.uptime_checks ?? []).map((c: any) => <tr key={c.name}><td>{c.name}</td><td><b>{c.availability_percent ?? '—'}%</b></td><td>{c.avg_latency_ms ? Math.round(c.avg_latency_ms) + ' ms' : ''}</td></tr>)}{!r.uptime_checks?.length && <Empty cols={3} text="No uptime checks."/>}</tbody></table></div></section>
       </div>
       {r.logs && <p className="muted">Logs in period: {Object.entries(r.logs).map(([k, v]) => `${k} ${v}`).join(' · ')}</p>}
@@ -137,7 +137,7 @@ export function PlatformPage({ organizationId, token }: { organizationId: string
         <Row k="Notifications (7 days)" v={`${s.notifications_7d?.sent ?? 0} sent · ${s.notifications_7d?.failed ?? 0} failed · ${s.notifications_7d?.skipped ?? 0} skipped`}/>
         {s.database_size_mb != null && <Row k="Database size" v={Number(s.database_size_mb).toFixed(1) + ' MB'}/>}
         {s.tables && Object.entries(s.tables).map(([k, v]) => <Row key={k} k={`Rows · ${k}`} v={Number(v).toLocaleString()}/>)}</section></div>}
-    {s && <section className="panel page-panel"><div className="panel-head"><div><h3>Platform events</h3><p>Errors raised by the monitoring service itself.</p></div></div><div className="table-wrap"><table><thead><tr><th>TIME</th><th>LEVEL</th><th>SOURCE</th><th>MESSAGE</th></tr></thead><tbody>{(s.events ?? []).map((e: any) => <tr key={e.id}><td>{new Date(e.created_at).toLocaleString()}</td><td><Sev level={e.level === 'error' ? 'error' : e.level}/></td><td>{e.source}</td><td className="wrap-cell">{e.message}</td></tr>)}{!s.events?.length && <Empty cols={4} text="No platform errors. All good."/>}</tbody></table></div></section>}
+    {s && <section className="panel page-panel"><div className="panel-head"><div><h3>Platform events</h3><p>Errors raised by the monitoring service itself.</p></div></div><div className="table-wrap"><table><thead><tr><th>TIME</th><th>LEVEL</th><th>SOURCE</th><th>MESSAGE</th></tr></thead><tbody>{(s.events ?? []).map((e: any) => <tr key={e.id}><td>{new Date(e.created_at).toLocaleString()}</td><td><Sev level={e.level === 'error' ? 'error' : e.level}/></td><td>{e.source}</td><td className="wrap-cell"><LongText text={e.message}/></td></tr>)}{!s.events?.length && <Empty cols={4} text="No platform errors. All good."/>}</tbody></table></div></section>}
   </div>;
 }
 
@@ -163,7 +163,7 @@ export function ChannelsPanel({ organizationId, role, token }: { organizationId:
     <section className="panel page-panel"><div className="table-wrap"><table><thead><tr><th>CHANNEL</th><th>TYPE</th><th>DESTINATION</th><th>MIN. SEVERITY</th><th></th></tr></thead><tbody>
       {rows.map(c => <tr key={c.id}><td><b>{c.name}</b>{!c.enabled && <span className="muted"> · off</span>}</td><td>{c.channel_type}</td><td>{shown(c)}</td><td>{c.min_severity}</td><td><div className="row-actions"><button className="secondary-action" disabled={busy === c.id} onClick={() => test(c.id)}>Send test</button><button className="secondary-action" onClick={() => flip(c)}>{c.enabled ? 'Turn off' : 'Turn on'}</button><button className="danger-action" onClick={() => del(c.id)}>Delete</button></div></td></tr>)}
       {!rows.length && <Empty cols={5} text="No channels yet. Without one, alerts only appear in the dashboard."/>}</tbody></table></div></section>
-    <section className="panel page-panel"><div className="panel-head"><div><h3>Recent deliveries</h3></div></div><div className="table-wrap"><table><tbody>{deliveries.map(d => <tr key={d.id}><td>{new Date(d.created_at).toLocaleString()}</td><td>{d.kind}</td><td><span className={`status-pill ${d.status === 'sent' ? 'online' : d.status === 'failed' ? 'offline' : 'pending'}`}><i/>{d.status}</span></td><td className="muted">{d.detail}</td></tr>)}{!deliveries.length && <Empty cols={4} text="Nothing sent yet."/>}</tbody></table></div></section></div>;
+    <section className="panel page-panel"><div className="panel-head"><div><h3>Recent deliveries</h3></div></div><div className="table-wrap"><table><tbody>{deliveries.map(d => <tr key={d.id}><td>{new Date(d.created_at).toLocaleString()}</td><td>{d.kind}</td><td><span className={`status-pill ${d.status === 'sent' ? 'online' : d.status === 'failed' ? 'offline' : 'pending'}`}><i/>{d.status}</span></td><td className="wrap-cell muted"><LongText text={d.detail}/></td></tr>)}{!deliveries.length && <Empty cols={4} text="Nothing sent yet."/>}</tbody></table></div></section></div>;
 }
 
 export function MaintenancePanel({ organizationId, role }: { organizationId: string; role: Role }) {
@@ -271,7 +271,7 @@ export function DeviceDetail({ devices, initialId }: { devices: Dev[]; initialId
     </div>
     <div className="two-col">
       <section className="panel page-panel"><div className="panel-head"><div><h3>Top processes</h3><p>Latest sample · names only</p></div></div><div className="table-wrap"><table><thead><tr><th>PROCESS</th><th>CPU</th><th>MEMORY</th></tr></thead><tbody>{(latest?.top_processes ?? []).map((p: any, i: number) => <tr key={i}><td>{p.name}</td><td>{p.cpu}%</td><td>{p.memory_mb} MB</td></tr>)}{!latest?.top_processes?.length && <Empty cols={3} text="Needs agent v0.4.0+."/>}</tbody></table></div></section>
-      <section className="panel page-panel"><div className="panel-head"><div><h3>Recent logs</h3></div></div><div className="table-wrap"><table><tbody>{logs.map(l => <tr key={l.id}><td><Sev level={l.level}/></td><td className="wrap-cell">{l.message}</td><td>{ago(l.logged_at)}</td></tr>)}{!logs.length && <Empty cols={3} text="No warnings or errors."/>}</tbody></table></div></section>
+      <section className="panel page-panel"><div className="panel-head"><div><h3>Recent logs</h3></div></div><div className="table-wrap"><table><tbody>{logs.map(l => <tr key={l.id}><td><Sev level={l.level}/></td><td className="wrap-cell"><LongText text={l.message}/></td><td>{ago(l.logged_at)}</td></tr>)}{!logs.length && <Empty cols={3} text="No warnings or errors."/>}</tbody></table></div></section>
     </div></div>;
 }
 
