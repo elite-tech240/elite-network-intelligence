@@ -176,6 +176,31 @@ async function logDelivery(organizationId: string, channelId: string, alertEvent
 }
 const esc = (s: unknown) => String(s ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c] as string));
 
+// Shared branded wrapper for every outbound email (alerts, resolved, test, weekly report).
+// Plain Arial with no shell reads as spam; this at least carries the mark and the accent color.
+const SEVERITY_COLOR: Record<string, string> = { critical: "#e5484d", warning: "#f5630f", info: "#3b82f6" };
+function emailShell(preheader: string, bodyHtml: string) {
+  return `<!DOCTYPE html><html><body style="margin:0;padding:0;background:#0b0d10;font-family:Arial,Helvetica,sans-serif;">
+<div style="display:none;max-height:0;overflow:hidden;opacity:0">${esc(preheader)}</div>
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#0b0d10;padding:32px 0">
+<tr><td align="center">
+<table role="presentation" width="100%" style="max-width:560px;background:#14181e;border-radius:12px;overflow:hidden;border:1px solid #23272f">
+<tr><td style="padding:20px 28px;border-bottom:3px solid #f5630f">
+<img src="${esc(APP_URL)}/apple-touch-icon.png" width="26" height="26" style="border-radius:6px;vertical-align:middle;display:inline-block"/>
+<span style="color:#ffffff;font-size:15px;font-weight:700;margin-left:10px;vertical-align:middle">Elite Network Intelligence</span>
+</td></tr>
+<tr><td style="padding:28px;color:#dce5f3;font-size:14px;line-height:1.65">${bodyHtml}</td></tr>
+<tr><td style="padding:16px 28px;border-top:1px solid #23272f;color:#6f7a89;font-size:12px">Elite Tech &middot; <a href="${esc(APP_URL)}" style="color:#ff9a5c;text-decoration:none">${esc(APP_URL)}</a></td></tr>
+</table></td></tr></table></body></html>`;
+}
+function emailButton(label: string, href: string) {
+  return `<p style="margin:22px 0 0"><a href="${esc(href)}" style="background:#f5630f;color:#ffffff;text-decoration:none;font-weight:700;font-size:13px;padding:11px 20px;border-radius:8px;display:inline-block">${esc(label)}</a></p>`;
+}
+function severityBadge(severity: string, label: string) {
+  const color = SEVERITY_COLOR[severity] || "#71819a";
+  return `<span style="background:${color}22;color:${color};font-size:11px;font-weight:700;letter-spacing:.4px;text-transform:uppercase;padding:4px 9px;border-radius:20px;display:inline-block;margin-bottom:12px">${esc(label)}</span>`;
+}
+
 async function dispatchAlertNotifications(): Promise<number> {
   const since = new Date(Date.now() - 24 * 3600 * 1000).toISOString();
   const [{ data: fresh }, { data: resolved }] = await Promise.all([
@@ -193,8 +218,10 @@ async function dispatchAlertNotifications(): Promise<number> {
   for (const item of items) {
     const targets = (channels || []).filter((c: any) => c.organization_id === item.organization_id && severityRank[item.severity] >= severityRank[c.min_severity]);
     const notice: Notice = item.kind === "alert"
-      ? { kind: "alert", severity: item.severity, title: `[${item.severity.toUpperCase()}] ${item.title}`, text: `${item.message}\n\nOpen the dashboard: ${APP_URL}/alerts` }
-      : { kind: "resolved", severity: item.severity, title: `[RESOLVED] ${item.title}`, text: `This alert has cleared.\n${item.message}\n\n${APP_URL}/alerts` };
+      ? { kind: "alert", severity: item.severity, title: `[${item.severity.toUpperCase()}] ${item.title}`, text: `${item.message}\n\nOpen the dashboard: ${APP_URL}/alerts`,
+          html: emailShell(item.title, `${severityBadge(item.severity, `${item.severity} alert`)}<h2 style="margin:0 0 10px;color:#fff;font-size:17px">${esc(item.title)}</h2><p style="margin:0;color:#aebdd2">${esc(item.message)}</p>${emailButton("Open the dashboard", `${APP_URL}/alerts`)}`) }
+      : { kind: "resolved", severity: item.severity, title: `[RESOLVED] ${item.title}`, text: `This alert has cleared.\n${item.message}\n\n${APP_URL}/alerts`,
+          html: emailShell(`Resolved: ${item.title}`, `${severityBadge("info", "resolved")}<h2 style="margin:0 0 10px;color:#fff;font-size:17px">${esc(item.title)}</h2><p style="margin:0;color:#aebdd2">This alert has cleared.<br/>${esc(item.message)}</p>${emailButton("Open the dashboard", `${APP_URL}/alerts`)}`) };
     for (const channel of targets) {
       const result = await deliver(channel, notice);
       await logDelivery(item.organization_id, channel.id, item.id, item.kind, result);
@@ -229,10 +256,11 @@ function reportText(orgName: string, r: any) {
   return lines.join("\n");
 }
 function reportHtml(orgName: string, r: any) {
-  const rows = r.devices.map((d: any) => `<tr><td>${esc(d.hostname)}</td><td>${esc(d.availability_percent)}%</td><td>${esc(d.cpu_avg ?? "-")}%</td><td>${esc(d.memory_avg ?? "-")}%</td><td>${esc(d.disk_max ?? "-")}%</td></tr>`).join("");
-  return `<div style="font-family:Arial,sans-serif;max-width:640px"><h2>Weekly monitoring report</h2><p>${esc(orgName)} &middot; ${esc(r.period.from.slice(0, 10))} to ${esc(r.period.to.slice(0, 10))}</p>` +
-    `<table cellpadding="6" style="border-collapse:collapse;width:100%;border:1px solid #ddd"><tr style="background:#f3f5f8"><th align="left">Device</th><th>Availability</th><th>CPU avg</th><th>Memory avg</th><th>Disk max</th></tr>${rows}</table>` +
-    `<p><b>Alerts:</b> ${esc(r.alerts.total)} in period, ${esc(r.alerts.open)} open now.</p><p><a href="${esc(APP_URL)}/reports">Open full report</a></p></div>`;
+  const rows = r.devices.map((d: any) => `<tr><td style="padding:8px 10px;border-bottom:1px solid #23272f;color:#dce5f3">${esc(d.hostname)}</td><td style="padding:8px 10px;border-bottom:1px solid #23272f;color:#9eacc0">${esc(d.availability_percent)}%</td><td style="padding:8px 10px;border-bottom:1px solid #23272f;color:#9eacc0">${esc(d.cpu_avg ?? "-")}%</td><td style="padding:8px 10px;border-bottom:1px solid #23272f;color:#9eacc0">${esc(d.memory_avg ?? "-")}%</td><td style="padding:8px 10px;border-bottom:1px solid #23272f;color:#9eacc0">${esc(d.disk_max ?? "-")}%</td></tr>`).join("");
+  const body = `<h2 style="margin:0 0 4px;color:#fff;font-size:17px">Weekly monitoring report</h2><p style="margin:0 0 18px;color:#8594aa">${esc(orgName)} &middot; ${esc(r.period.from.slice(0, 10))} to ${esc(r.period.to.slice(0, 10))}</p>` +
+    `<table cellpadding="0" cellspacing="0" style="border-collapse:collapse;width:100%"><tr style="background:#1a1e26"><th align="left" style="padding:8px 10px;font-size:11px;color:#6f8099;text-transform:uppercase">Device</th><th align="left" style="padding:8px 10px;font-size:11px;color:#6f8099;text-transform:uppercase">Availability</th><th align="left" style="padding:8px 10px;font-size:11px;color:#6f8099;text-transform:uppercase">CPU avg</th><th align="left" style="padding:8px 10px;font-size:11px;color:#6f8099;text-transform:uppercase">Memory avg</th><th align="left" style="padding:8px 10px;font-size:11px;color:#6f8099;text-transform:uppercase">Disk max</th></tr>${rows}</table>` +
+    `<p style="margin:18px 0 0;color:#aebdd2"><b style="color:#fff">Alerts:</b> ${esc(r.alerts.total)} in period, ${esc(r.alerts.open)} open now.</p>${emailButton("Open full report", `${APP_URL}/reports`)}`;
+  return emailShell(`Weekly monitoring report for ${orgName}`, body);
 }
 async function sendWeeklyReports(): Promise<number> {
   const now = new Date();
@@ -745,7 +773,8 @@ async function handle(req: Request): Promise<Response> {
     const { data: channel } = await admin.from("notification_channels").select("id,organization_id,channel_type,config").eq("id", String(body.channel_id || "")).maybeSingle();
     if (!channel) return fail("Channel not found", 404);
     const { user } = await requireMember(req, channel.organization_id, ["owner", "admin"]);
-    const result = await deliver(channel, { kind: "test", severity: "info", title: "[TEST] Elite Network Intelligence notification", text: "This is a test notification. If you can read it, this channel works." });
+    const result = await deliver(channel, { kind: "test", severity: "info", title: "[TEST] Elite Network Intelligence notification", text: "This is a test notification. If you can read it, this channel works.",
+      html: emailShell("Test notification", `${severityBadge("info", "test")}<h2 style="margin:0 0 10px;color:#fff;font-size:17px">Channel works</h2><p style="margin:0;color:#aebdd2">This is a test notification. If you can read it, this channel is wired up correctly.</p>${emailButton("Open the dashboard", APP_URL)}`) });
     await logDelivery(channel.organization_id, channel.id, null, "test", result);
     await audit(channel.organization_id, "user", user.id, "test_notification", "notification_channel", channel.id, { status: result.status });
     return json({ ok: result.status === "sent", ...result }, result.status === "failed" ? 502 : 200);
