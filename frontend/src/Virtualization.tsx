@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Server, HardDrive, Copy, Check, ChevronDown, ChevronRight } from 'lucide-react';
 import { api, apiUrl } from './lib';
-import { Select, Drawer, EmptyState } from './ui';
+import { Select, Drawer, EmptyState, Stepper, SetupCard } from './ui';
 import { DeviceDetail } from './Monitoring';
 
 type Device = { id: string; hostname: string; ip_address: string | null; status: string; device_type: string | null; last_seen_at: string | null; site_id?: string; parent_device_id?: string | null };
@@ -53,6 +53,7 @@ export function VirtualizationPage({ devices, sites, organizationId, accessToken
   const [site, setSite] = useState(sites[0]?.id ?? '');
   const [token, setToken] = useState(''); const [expires, setExpires] = useState('');
   const [esxiHost, setEsxiHost] = useState(''); const [busy, setBusy] = useState(false); const [error, setError] = useState('');
+  const [step, setStep] = useState(0);
   const [shell, setShell] = useState<'powershell' | 'bash'>('powershell');
   const siteId = site || sites[0]?.id || '';
 
@@ -61,7 +62,7 @@ export function VirtualizationPage({ devices, sites, organizationId, accessToken
     setBusy(true); setError('');
     try {
       const r = await api('/enrollment-tokens', accessToken, { method: 'POST', body: { organization_id: organizationId, site_id: siteId, label: 'ESXi connector' } });
-      setToken(r.token); setExpires(r.expires_at);
+      setToken(r.token); setExpires(r.expires_at); setStep(2);
     } catch (e) { setError((e as Error).message); } finally { setBusy(false); }
   };
 
@@ -76,37 +77,34 @@ export function VirtualizationPage({ devices, sites, organizationId, accessToken
     : '';
 
   return <div className="sites-workspace virt-page">
-    <section className="panel page-panel installer esxi-installer">
-      <header className="installer-head"><h3>Connect an ESXi host</h3><p>Works with standalone ESXi 6+ — no vCenter needed. Run the connector on any machine that can reach the host's management network (port 443).</p></header>
-      {!canManage ? <p className="muted">Your role is read-only for infrastructure setup.</p> : <>
-        <div className="installer-step"><span className="step-num">1</span><div className="step-body">
-          <h4>Choose where the host lives</h4>
-          <div className="installer-row esxi-connect-row">
-            <Select className="filter-select installer-select" value={siteId} onChange={e => { setSite(e.target.value); setToken(''); }} aria-label="Site">
+    {!canManage ? <SetupCard title="Connect an ESXi host" text="Works with standalone ESXi 6+ — no vCenter needed."><p className="muted">Your role is read-only for infrastructure setup.</p></SetupCard> :
+    <SetupCard title="Connect an ESXi host" text="Works with standalone ESXi 6+ — no vCenter needed. Run the connector on any machine that can reach the host's management network (port 443).">
+      <Stepper current={step} onChange={i => { setStep(i); if (i < 2) setToken(''); }} steps={[
+        { title: 'Choose site and host', hint: 'Where the host lives and its IP or hostname', summary: `${sites.find(s => s.id === siteId)?.name ?? ''} · ${esxiHost}`, content: <>
+          <div className="step-row step-row-fill">
+            <Select className="filter-select step-select" value={siteId} onChange={e => { setSite(e.target.value); setToken(''); }} aria-label="Site">
               {sites.map(v => <option key={v.id} value={v.id}>{v.name}</option>)}
             </Select>
-            <input className="esxi-host-input" placeholder="ESXi host IP or hostname" value={esxiHost} onChange={e => setEsxiHost(e.target.value)}/>
-            <button className="primary-action" onClick={generate} disabled={busy || !apiUrl || !sites.length}>{busy ? 'Generating…' : token ? 'Generate a new token' : 'Generate connector token'}</button>
+            <input className="esxi-host-input" placeholder="192.168.1.10 or esxi-01.local" value={esxiHost} onChange={e => setEsxiHost(e.target.value)} onKeyDown={e => { if (e.key === 'Enter' && esxiHost.trim()) setStep(1); }} aria-label="ESXi host IP or hostname"/>
+            <button className="primary-action" onClick={() => setStep(1)} disabled={!sites.length || !esxiHost.trim()}>Continue</button>
           </div>
           {!sites.length && <p className="muted">Add a site first (Sites tab).</p>}
+        </> },
+        { title: 'Generate connector token', hint: 'One-time token, valid 24 hours', summary: 'Token ready', content: <>
+          <div className="step-row"><button className="primary-action" onClick={generate} disabled={busy || !apiUrl}>{busy ? 'Generating…' : 'Generate connector token'}</button></div>
           {error && <div className="error-banner">{error}</div>}
-        </div></div>
-        <div className={token && esxiHost ? 'installer-step' : 'installer-step disabled'}><span className="step-num">2</span><div className="step-body">
-          <h4>Run the connector</h4>
-          {!token && <p className="muted">Generate a token in step 1 first.</p>}
-          {token && !esxiHost && <p className="muted">Enter the ESXi host's IP or hostname in step 1.</p>}
-          {token && esxiHost && <>
-            <p className="muted">Download <code>agent/esxi_connector.py</code> from the repo (needs <code>pip install pyvmomi requests</code>), then run on a machine with network access to the host:</p>
-            <div className="os-tabs" role="tablist">{([['powershell', 'Windows (PowerShell)'], ['bash', 'Linux / macOS (bash)']] as const).map(([id, label]) =>
-              <button key={id} type="button" role="tab" aria-selected={shell === id} className={shell === id ? 'os-tab active' : 'os-tab'} onClick={() => setShell(id)}>{label}</button>)}</div>
-            <div className="cmd-box"><code>{command}</code></div>
-            <div className="installer-row"><CopyButton text={command}/></div>
-            <p className="muted">Replace <code>ESXI_PASSWORD</code> with the host's real root (or read-only) password — it's only sent to the ESXi host itself, never to Elite. The host and every VM on it will appear below within a minute.</p>
-          </>}
-          {token && <p className="muted token-meta">Token expires {new Date(expires).toLocaleString()} · one host only</p>}
-        </div></div>
-      </>}
-    </section>
+        </> },
+        { title: 'Run the connector', hint: 'On a machine that can reach the host', content: <>
+          <p className="muted">Download <code>agent/esxi_connector.py</code> from the repo (needs <code>pip install pyvmomi requests</code>), then run:</p>
+          <div className="os-tabs" role="tablist">{([['powershell', 'Windows (PowerShell)'], ['bash', 'Linux / macOS (bash)']] as const).map(([id, label]) =>
+            <button key={id} type="button" role="tab" aria-selected={shell === id} className={shell === id ? 'os-tab active' : 'os-tab'} onClick={() => setShell(id)}>{label}</button>)}</div>
+          <div className="cmd-box"><code>{command}</code></div>
+          <div className="step-row"><CopyButton text={command}/></div>
+          <p className="muted">Replace <code>ESXI_PASSWORD</code> with the host's real root (or read-only) password — it's only sent to the ESXi host itself, never to Elite. The host and its VMs appear below within a minute.</p>
+          <p className="muted token-meta">Token expires {expires ? new Date(expires).toLocaleString() : '—'} · one host only</p>
+        </> },
+      ]}/>
+    </SetupCard>}
 
     <div className="esxi-section">
       <div className="esxi-section-head"><h3>Hosts</h3><span className="esxi-count">{hosts.length}</span><p>{hosts.filter(h => deviceStatus(h) === 'online').length} online · {hosts.filter(h => deviceStatus(h) !== 'online').length} offline</p></div>

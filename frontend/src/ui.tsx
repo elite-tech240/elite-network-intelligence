@@ -204,3 +204,23 @@ export function Modal({ title, subtitle, icon, onClose, children, width = 480 }:
     {children}
   </div></div>, document.body);
 }
+
+/* ---------- setup stepper (one look for every guided flow) ---------- */
+export type StepDef = { title: string; hint: string; summary?: ReactNode; content: ReactNode };
+export function Stepper({ steps, current, onChange }: { steps: StepDef[]; current: number; onChange: (i: number) => void }) {
+  return <ol className="stepper">{steps.map((s, i) => {
+    const state = i < current ? 'done' : i === current ? 'active' : 'locked';
+    return <li key={i} className={`stepper-item ${state}`} aria-current={state === 'active' ? 'step' : undefined}>
+      <div className="stepper-rail"><span className="stepper-dot">{state === 'done' ? <Check size={15}/> : i + 1}</span>{i < steps.length - 1 && <span className="stepper-line"/>}</div>
+      <div className="stepper-body">
+        <div className="stepper-title"><h4>{s.title}</h4>{state === 'locked' && <LockIcon/>}{state === 'done' && <button type="button" className="stepper-change" onClick={() => onChange(i)}>Change</button>}</div>
+        <p className="stepper-hint">{state === 'done' ? (s.summary ?? 'Done') : state === 'locked' ? `Finish step ${current + 1} first` : s.hint}</p>
+        {state === 'active' && <div className="stepper-content">{s.content}</div>}
+      </div>
+    </li>;
+  })}</ol>;
+}
+function LockIcon() { return <svg className="stepper-lock" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg>; }
+export function SetupCard({ title, text, children }: { title: string; text: string; children: ReactNode }) {
+  return <section className="panel setup-card"><header className="setup-card-head"><h3>{title}</h3><p>{text}</p></header><div className="setup-card-body">{children}</div></section>;
+}
