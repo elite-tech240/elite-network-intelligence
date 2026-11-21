@@ -127,14 +127,29 @@ jobs:
         with:
           name: EliteNetworkAgent-Windows-Installer
           path: release-assets
+      - name: Check out the repository
+        uses: actions/checkout@v4
+      - name: Read the agent version
+        id: agent
+        run: |
+          version=$(grep -oP '^AGENT_VERSION\s*=\s*"\K[^"]+' agent/agent.py)
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - name: Stage the Unix installer alongside it
+        run: cp agent/install.sh release-assets/install.sh
       - name: Publish installer release
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: agent-installer-v0.4.0
-          name: Elite Network Agent Installer v0.4.0
-          body: Branded Windows x64 single-file installer. Enter a unique one-time enrollment token and site ID in the setup wizard for each computer.
-          files: release-assets/EliteNetworkAgent-Setup.exe
+          tag_name: agent-installer-v${{ steps.agent.outputs.version }}
+          name: Elite Network Agent Installer v${{ steps.agent.outputs.version }}
+          body: |
+            Branded Windows x64 single-file installer, plus install.sh for Linux and macOS.
+            Enter a unique one-time enrollment token and site ID in the setup wizard for each computer.
+
+            Agents from v0.5.0 can be updated from the web app; older ones need this installer run once by hand.
+          files: |
+            release-assets/EliteNetworkAgent-Setup.exe
+            release-assets/install.sh
           overwrite_files: true
-          make_latest: false
+          make_latest: true
           fail_on_unmatched_files: true

@@ -1,5 +1,5 @@
 import { FormEvent, useCallback, useEffect, useState } from 'react';
-import { supabase, api, fmtBps, fmtUptime, ago, LATEST_AGENT_VERSION, publishedAgentVersion, type Role } from './lib';
+import { supabase, api, fmtBps, fmtUptime, ago, LATEST_AGENT_VERSION, SELF_UPDATE_FROM, versionAtLeast, publishedAgentVersion, type Role } from './lib';
 import { Maximize2 } from 'lucide-react';
 import { LineChart, Sparkline, type Point } from './Chart';
 import { Flash, confirmDialog, Skeleton, Select, toast } from './ui';
@@ -235,6 +235,8 @@ export function DeviceDetail({ devices, initialId }: { devices: Dev[]; initialId
   useTick(() => void loadUpgrade(), 10000, [loadUpgrade]);
   // an agent that never reported its version is running something older than the published build
   const outdated = !!dev && dev.agent_version !== latestVersion;
+  // Older agents never learned the upgrade command, so queueing one would go nowhere.
+  const canSelfUpdate = versionAtLeast(dev?.agent_version, SELF_UPDATE_FROM);
   const inFlight = upgrade && ['queued', 'delivered', 'running'].includes(upgrade.status);
   const startUpgrade = async () => {
     if (!supabase || !id) return;
@@ -255,7 +257,9 @@ export function DeviceDetail({ devices, initialId }: { devices: Dev[]; initialId
       {inFlight
         ? <small className="txt-warn">{upgrade.status === 'running' ? `installing ${latestVersion}…` : `update queued (${latestVersion})`}</small>
         : outdated
-          ? <><small className="txt-warn">{dev?.agent_version ? `update available (${latestVersion})` : `version unknown · install ${latestVersion}`}</small><button className="primary-action sm agent-update" onClick={startUpgrade} disabled={busy}>{busy ? 'Sending…' : 'Update agent'}</button></>
+          ? canSelfUpdate
+            ? <><small className="txt-warn">update available ({latestVersion})</small><button className="primary-action sm agent-update" onClick={startUpgrade} disabled={busy}>{busy ? 'Sending…' : 'Update agent'}</button></>
+            : <small className="txt-warn">{dev?.agent_version ? `on ${dev.agent_version}` : 'version unknown'} · run the installer once by hand to reach {SELF_UPDATE_FROM}, then updates happen from here</small>
           : upgrade?.status === 'failed'
             ? <small className="txt-bad">last update failed: {upgrade.error ?? 'unknown error'}</small>
             : <small className="txt-ok">up to date</small>}</div></div>

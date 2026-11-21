@@ -5,6 +5,19 @@ const key = import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined;
 export const configured = Boolean(url && key && !url.includes('YOUR_PROJECT') && !key.includes('YOUR_'));
 export const apiUrl = (import.meta.env.VITE_API_URL as string | undefined)?.replace(/\/$/, '') ?? '';
 export const supabase: SupabaseClient | null = configured ? createClient(url!, key!) : null;
+export const SELF_UPDATE_FROM = '0.5.0'; // the first agent that understands the upgrade command
+
+export function versionAtLeast(version: string | null | undefined, minimum: string): boolean {
+  if (!version) return false;
+  const a = version.split('.').map(n => parseInt(n, 10) || 0);
+  const b = minimum.split('.').map(n => parseInt(n, 10) || 0);
+  for (let i = 0; i < Math.max(a.length, b.length); i++) {
+    const d = (a[i] ?? 0) - (b[i] ?? 0);
+    if (d !== 0) return d > 0;
+  }
+  return true;
+}
+
 export const LATEST_AGENT_VERSION = '0.4.0'; // fallback only; the live value comes from agent_releases
 
 export async function publishedAgentVersion(): Promise<string> {
