@@ -28,7 +28,7 @@ export function LogsPage({ organizationId, devices }: { organizationId: string; 
     if (q.trim()) query = query.ilike('message', `%${q.trim().replace(/[%,]/g, '')}%`);
     const { data, error } = await query; if (error) setErr(error.message); else { setErr(''); setRows(data ?? []); }
   }, [organizationId, device, level, range, q]);
-  useTick(() => { void load(); }, 15000, [load]);
+  useTick(() => { void load(); }, 1000, [load]);
   const name = (id: string) => devices.find(d => d.id === id)?.hostname ?? id.slice(0, 8);
   return <div className="sites-workspace">
     <section className="panel page-panel"><div className="panel-head"><div><h3>Device logs</h3><p>Warnings, errors and failed sign-ins collected read-only from each device (kept 30 days).</p></div></div>
@@ -204,7 +204,7 @@ export function DeviceDetail({ devices, initialId }: { devices: Dev[]; initialId
     const { data: l } = await supabase.from('device_metrics').select('recorded_at,uptime_seconds,top_processes').eq('device_id', id).order('recorded_at', { ascending: false }).limit(1); setLatest(l?.[0] ?? null);
     const { data: lg } = await supabase.from('device_logs').select('id,level,message,logged_at').eq('device_id', id).order('logged_at', { ascending: false }).limit(6); setLogs(lg ?? []);
   }, [id, range]);
-  useTick(() => void load(), 5000, [load]);
+  useTick(() => void load(), 1000, [load]);
   // Append each new sample as it arrives, so the chart moves between refreshes.
   useEffect(() => {
     if (!supabase || !id || RANGES[range].hours > 24) return;
