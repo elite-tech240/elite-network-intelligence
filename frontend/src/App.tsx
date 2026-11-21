@@ -198,7 +198,7 @@ export default function App() {
   if (!session) return <AuthScreen configured email={email} setEmail={setEmail} password={password} setPassword={setPassword} showPassword={showPassword} setShowPassword={setShowPassword} busy={busy} error={authError} notice={notice} resetMode={resetMode} setResetMode={setResetMode} onSubmit={resetMode ? sendReset : signIn} />;
   if (authAction) return <SetPasswordScreen action={authAction} password={newAuthPassword} setPassword={setNewAuthPassword} password2={newAuthPassword2} setPassword2={setNewAuthPassword2} busy={authActionBusy} error={authActionError} onSubmit={setAccountPassword} />;
 
-  return <div className="shell"><div className="fx-tape" aria-hidden="true"/>
+  return <div className="shell"><div className="fx-tape" aria-hidden="true"/><div className="fx-bg" aria-hidden="true"><div className="fx-beam"/><div className="fx-floor"/><div className="fx-horizon"/></div>
     <header className="topnav">
       <div className="tn-brand"><div className="brand-mark"><img src="/elite-mark.svg" alt="" /></div><b>ELITE</b></div>
       <div className="workspace-wrap tn-ws" ref={wsRef}><button className="workspace" aria-haspopup="menu" aria-expanded={wsOpen} onClick={() => setWsOpen(o => !o)}><div className="workspace-icon">{orgName.slice(0, 2).toUpperCase()}</div><div><b>{orgName}</b><small>{membership ? `${membership.role} access` : 'No organization access'}</small></div><ChevronDown size={15}/></button>

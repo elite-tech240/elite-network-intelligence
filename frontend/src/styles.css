@@ -1203,3 +1203,42 @@ td.empty,.empty{color:var(--muted2)!important}
 .lv-map{background:linear-gradient(180deg,rgba(18,18,20,.85),rgba(10,10,12,.92))!important}
 .lv-chip.warn{background:rgba(60,14,24,.5)!important}
 .tn-mega,.tn-menu,.ws-menu,.bell-menu,.acct-menu,.select-menu{background:#121214!important}
+
+/* =====================================================================
+   v2.3 — "Horizon glass": light beam + grid horizon (Bg 2) with liquid
+   glass cards and a running orange edge on hover (Bg 4).
+   ===================================================================== */
+@property --edge-a{syntax:"<angle>";inherits:false;initial-value:0deg}
+.shell{background:#070708!important}
+.fx-bg{position:fixed;inset:0;z-index:0;overflow:hidden;pointer-events:none}
+.shell>.main{position:relative;z-index:1}
+.shell>.topnav{position:sticky;z-index:50}
+.fx-beam{position:absolute;left:-15%;right:-15%;top:-360px;height:720px;background:conic-gradient(from 180deg at 50% 0%,transparent 125deg,rgba(245,99,15,.26) 160deg,rgba(255,200,150,.13) 180deg,rgba(245,99,15,.26) 200deg,transparent 235deg);filter:blur(42px);transform-origin:50% 0;animation:fxsway 14s ease-in-out infinite alternate}
+@keyframes fxsway{from{transform:rotate(-3deg)}to{transform:rotate(3deg) translateX(30px)}}
+.fx-floor{position:absolute;left:-50%;right:-50%;bottom:-38vh;height:78vh;background-image:linear-gradient(rgba(245,99,15,.16) 1px,transparent 1px),linear-gradient(90deg,rgba(245,99,15,.16) 1px,transparent 1px);background-size:64px 64px;transform:perspective(620px) rotateX(64deg);transform-origin:top;-webkit-mask:linear-gradient(transparent,#000 28%,#000 62%,transparent);mask:linear-gradient(transparent,#000 28%,#000 62%,transparent);animation:fxfloor 7s linear infinite;opacity:.75}
+@keyframes fxfloor{to{background-position:0 64px,0 0}}
+.fx-horizon{position:absolute;left:0;right:0;bottom:calc(40vh - 1px);height:1px;background:linear-gradient(90deg,transparent,rgba(255,154,92,.5),transparent);box-shadow:0 0 34px 8px rgba(245,99,15,.18)}
+.shell::after{content:"";position:fixed;inset:0;z-index:0;pointer-events:none;background:radial-gradient(rgba(255,255,255,.03) 1px,transparent 1px) 0 0/26px 26px;-webkit-mask:linear-gradient(#000,transparent 70%);mask:linear-gradient(#000,transparent 70%)}
+
+/* liquid glass surfaces */
+.panel,.page-panel,.settings-card,.chart-panel,.site-card,.setup-card,.empty-panel,.access-panel,.esxi-host-card,.danger-card,.onboarding,.lv-chip,.lv-card,.lv-feed,.lv-map{position:relative;background:linear-gradient(180deg,rgba(255,255,255,.065),rgba(255,255,255,.015) 42%,rgba(255,255,255,.025)),rgba(12,12,14,.55)!important;border:1px solid transparent!important;backdrop-filter:blur(28px) saturate(170%)!important;-webkit-backdrop-filter:blur(28px) saturate(170%)!important;box-shadow:inset 0 1px 0 rgba(255,255,255,.14),inset 0 -1px 0 rgba(255,255,255,.03),0 30px 60px -32px rgba(0,0,0,.95)!important}
+.panel::before,.page-panel::before,.settings-card::before,.chart-panel::before,.site-card::before,.setup-card::before,.esxi-host-card::before,.lv-chip::before,.lv-card::before,.lv-feed::before{content:""!important;display:block!important;position:absolute;inset:-1px;z-index:0;border-radius:inherit;padding:1px;background:linear-gradient(150deg,rgba(255,255,255,.28),rgba(255,255,255,.05) 35%,rgba(255,255,255,.03) 65%,rgba(245,99,15,.38));-webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);-webkit-mask-composite:xor;mask-composite:exclude;pointer-events:none;animation:none!important;opacity:1!important;transform:none!important;height:auto!important;width:auto!important}
+.lv-map{border-color:rgba(255,255,255,.1)!important}
+/* running orange edge on hover (cards you click) */
+.lv-chip:hover::before,.lv-card:hover::before,.site-card:hover::before,.esxi-host-card:hover::before{background:conic-gradient(from var(--edge-a),rgba(255,255,255,.06) 0 62%,rgba(255,154,92,.95) 76%,rgba(245,99,15,.25) 86%,rgba(255,255,255,.06) 94%);animation:edgespin 2.6s linear infinite!important}
+@keyframes edgespin{to{--edge-a:360deg}}
+.lv-chip,.lv-card{transition:transform .25s cubic-bezier(.2,.8,.2,1),box-shadow .25s!important}
+.lv-chip:hover,.lv-card:hover{transform:translateY(-3px);box-shadow:inset 0 1px 0 rgba(255,255,255,.18),0 30px 60px -28px rgba(245,99,15,.35)!important}
+.lv-chip.warn{background:linear-gradient(180deg,rgba(251,113,133,.14),rgba(251,113,133,.03)),rgba(20,8,12,.6)!important}
+.lv-chip.warn::before{background:linear-gradient(150deg,rgba(253,164,175,.5),rgba(251,113,133,.08) 40%,rgba(251,113,133,.3))}
+/* keep content above the edge layer */
+.panel>*,.page-panel>*,.settings-card>*,.site-card>*,.setup-card>*,.esxi-host-card>*,.lv-chip>*,.lv-card>*,.lv-feed>*{position:relative;z-index:1}
+.lv-feed{position:absolute!important}
+/* top bar: same glass */
+.topnav{background:linear-gradient(180deg,rgba(255,255,255,.06),rgba(255,255,255,.015)),rgba(12,12,14,.7)!important;border:1px solid rgba(255,255,255,.09)!important;backdrop-filter:blur(28px) saturate(170%)!important;-webkit-backdrop-filter:blur(28px) saturate(170%)!important;box-shadow:inset 0 1px 0 rgba(255,255,255,.12),0 20px 40px -24px rgba(0,0,0,.9)!important}
+.page-tabs,.os-tabs,.lv-seg{background:rgba(12,12,14,.55)!important;backdrop-filter:blur(20px)!important;box-shadow:inset 0 1px 0 rgba(255,255,255,.08)}
+th{background:rgba(255,255,255,.025)!important}
+@media (prefers-reduced-motion:reduce){.fx-beam,.fx-floor{animation:none!important}.lv-chip:hover::before,.lv-card:hover::before{animation:none!important}}
+@media(max-width:650px){.fx-floor{opacity:.45}.fx-beam{top:-420px}}
+.fx-beam{top:-300px;height:760px;background:conic-gradient(from 180deg at 50% 0%,transparent 128deg,rgba(245,99,15,.42) 162deg,rgba(255,205,160,.22) 180deg,rgba(245,99,15,.42) 198deg,transparent 232deg);filter:blur(38px)}
+.fx-beam::after{content:"";position:absolute;left:50%;top:300px;width:520px;height:160px;transform:translateX(-50%);border-radius:50%;background:radial-gradient(ellipse,rgba(255,154,92,.22),transparent 70%);filter:blur(20px)}
