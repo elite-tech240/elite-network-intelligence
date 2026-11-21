@@ -1,15 +1,15 @@
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Activity, Pencil, Bell, Boxes, Cable, ChevronDown, CircleHelp, LayoutDashboard, LogOut, Network, Search, Settings, ShieldCheck, Wifi, ScrollText, Globe2, FileBarChart, ClipboardList, Gauge, MonitorUp, Zap, LockKeyhole, Eye, EyeOff, MapPin, Server, ArrowUpRight, UserRound, KeyRound, Sun, Moon, Languages, MoreHorizontal, Building2, Check, Plus, Trash2, RefreshCw, Layers } from 'lucide-react';
+import { Activity, Pencil, Bell, Boxes, Cable, ChevronDown, CircleHelp, LayoutDashboard, LogOut, Network, Search, Settings, ShieldCheck, ScrollText, Globe2, FileBarChart, ClipboardList, Gauge, MonitorUp, Zap, LockKeyhole, Eye, EyeOff, MapPin, Server, ArrowUpRight, UserRound, KeyRound, Sun, Moon, Languages, MoreHorizontal, Building2, Check, Plus, Trash2, RefreshCw, Layers } from 'lucide-react';
 import type { Session, User } from '@supabase/supabase-js';
 
 type Device = { id: string; hostname: string; ip_address: string | null; status: string; device_type: string | null; last_seen_at: string | null; site_id?: string; archived_at?: string | null; agent_version?: string | null; parent_device_id?: string | null; os_name?: string | null };
 type Site = { id: string; name: string; location: string | null };
 type Net = { id: string; name: string; cidr: string | null; site_id: string };
 type Membership = { organization_id: string; role: 'owner' | 'admin' | 'operator' | 'viewer'; organizations?: { id: string; name: string }[] | null };
+import { LiveOverview } from './LiveOverview';
 import { supabase, configured, apiUrl, api, fmtBps, LATEST_AGENT_VERSION, SELF_UPDATE_FROM, versionAtLeast, publishedAgentVersion, pendingAuthAction } from './lib';
 import { AgentInstaller } from './AgentInstaller';
-import { Toaster, ConfirmHost, Flash, confirmDialog, toast, usePrefs, tr, CommandPalette, Drawer, Skeleton, EmptyState, useTable, Th, Pager, Checklist, Select, Counter, Modal, type Command, type Prefs } from './ui';
-import { LineChart, type Point } from './Chart';
+import { Toaster, ConfirmHost, Flash, confirmDialog, toast, usePrefs, tr, CommandPalette, Drawer, Skeleton, EmptyState, useTable, Th, Pager, Select, Modal, type Command } from './ui';
 import { LogsPage, UptimePage, ReportsPage, AuditPage, PlatformPage, ChannelsPanel, MaintenancePanel, DiscoveryPanel, DeviceDetail, NocWall } from './Monitoring';
 import { VirtualizationPage } from './Virtualization';
 const nav = [
@@ -69,6 +69,8 @@ export default function App() {
   const [palette, setPalette] = useState(false);
   const lang = prefs.lang;
   const [wsOpen, setWsOpen] = useState(false); const wsRef = useRef<HTMLDivElement>(null);
+  const [moreOpen, setMoreOpen] = useState(false); const moreRef = useRef<HTMLDivElement>(null);
+  useEffect(() => { if (!moreOpen) return; const off = (e: MouseEvent) => { if (!moreRef.current?.contains(e.target as Node)) setMoreOpen(false); }; document.addEventListener('mousedown', off); return () => document.removeEventListener('mousedown', off); }, [moreOpen]);
   useEffect(() => { if (!wsOpen) return; const off = (e: MouseEvent) => { if (!wsRef.current?.contains(e.target as Node)) setWsOpen(false); }; document.addEventListener('mousedown', off); return () => document.removeEventListener('mousedown', off); }, [wsOpen]);
   const [bellOpen, setBellOpen] = useState(false); const bellRef = useRef<HTMLDivElement>(null);
   useEffect(() => { if (!bellOpen) return; const off = (e: MouseEvent) => { if (!bellRef.current?.contains(e.target as Node)) setBellOpen(false); }; document.addEventListener('mousedown', off); return () => document.removeEventListener('mousedown', off); }, [bellOpen]);
@@ -173,7 +175,6 @@ export default function App() {
   };
   const signOut = async () => { if (!(await confirmDialog('You will need to sign in again to access your workspace.', { title: 'Sign out?', confirmText: 'Sign out', danger: false }))) return; if (supabase) await supabase.auth.signOut(); window.history.replaceState({}, '', '/login'); setPage('Overview'); };
   const refresh = () => { if (session?.user) void loadWorkspace(session.user); };
-  const online = devices.filter(d => deviceStatus(d) === 'online').length;
   const title = tr(lang, page === 'Overview' ? 'Network overview' : page);
   const nonEsxiDevices = useMemo(() => devices.filter(d => d.device_type !== 'esxi_host' && d.device_type !== 'esxi_vm'), [devices]);
   const commands: Command[] = [
@@ -191,24 +192,26 @@ export default function App() {
   if (authAction) return <SetPasswordScreen action={authAction} password={newAuthPassword} setPassword={setNewAuthPassword} password2={newAuthPassword2} setPassword2={setNewAuthPassword2} busy={authActionBusy} error={authActionError} onSubmit={setAccountPassword} />;
 
   return <div className="shell"><div className="fx-tape" aria-hidden="true"/>
-    <aside className="sidebar">
-      <div className="brand"><div className="brand-mark"><img src="/elite-mark.svg" alt="" /></div><div><b>ELITE</b><span>NETWORK INTELLIGENCE</span></div></div>
-      <div className="workspace-wrap" ref={wsRef}><button className="workspace" aria-haspopup="menu" aria-expanded={wsOpen} onClick={() => setWsOpen(o => !o)}><div className="workspace-icon">{orgName.slice(0, 2).toUpperCase()}</div><div><b>{orgName}</b><small>{membership ? `${membership.role} access` : 'No organization access'}</small></div><ChevronDown size={15}/></button>
+    <header className="topnav">
+      <div className="tn-brand"><div className="brand-mark"><img src="/elite-mark.svg" alt="" /></div><b>ELITE</b></div>
+      <div className="workspace-wrap tn-ws" ref={wsRef}><button className="workspace" aria-haspopup="menu" aria-expanded={wsOpen} onClick={() => setWsOpen(o => !o)}><div className="workspace-icon">{orgName.slice(0, 2).toUpperCase()}</div><div><b>{orgName}</b><small>{membership ? `${membership.role} access` : 'No organization access'}</small></div><ChevronDown size={15}/></button>
         {wsOpen && <div className="ws-menu" role="menu"><div className="ws-menu-label">Workspaces</div>
           {memberships.map(m => <button key={m.organization_id} role="menuitem" className={m.organization_id === membership?.organization_id ? 'ws-item sel' : 'ws-item'} onClick={() => { setWsOpen(false); switchOrg(m); }}><Building2 size={16}/><span><b>{orgOf(m)}</b><small>{m.role}</small></span>{m.organization_id === membership?.organization_id && <Check size={15}/>}</button>)}
           {!memberships.length && <p className="ws-empty">You have no workspaces yet.</p>}
           <div className="ws-sep"/>
           <button role="menuitem" className="ws-item" onClick={() => { setWsOpen(false); setNewWs(true); }}><Plus size={16}/><span><b>Create workspace</b><small>Start a separate, empty environment</small></span></button>
           </div>}</div>
-      <nav>{[['MONITOR', ['Overview','Devices','Topology','Virtualization','Traffic','Alerts','Logs','Uptime']], ['INSIGHTS', ['Reports','Audit log']], ['MANAGE', ['Sites & Networks', ...(membership && ['owner','admin'].includes(membership.role) ? ['Platform'] : [])]]].map(([group, labels]) => <div key={group as string}><div className="nav-label">{tr(lang, group as string)}</div>{[...nav, adminNav].filter(i => (labels as string[]).includes(i.label)).map(item => <button key={item.label} className={page === item.label ? 'nav-item selected' : 'nav-item'} onClick={() => go(item.label)}><item.icon size={17}/>{tr(lang, item.label)}{item.label === 'Alerts' && openAlerts > 0 && <i className="nav-dot"/>}</button>)}</div>)}</nav>
-      <div className="nav-label tools-label">{tr(lang, 'PREFERENCES')}</div>
-      <button className={page === 'Settings' ? 'nav-item selected' : 'nav-item'} onClick={() => go('Settings')}><Settings size={17}/>{tr(lang, 'Settings')}</button>
-      <button className={page === 'NOC wall' ? 'nav-item active' : 'nav-item'} onClick={() => go('NOC wall')}><MonitorUp size={17}/>{tr(lang, 'NOC wall')}</button>
-      <a className="nav-item" href="https://github.com/elite-tech240/elite-network-intelligence/tree/main/docs" target="_blank" rel="noreferrer"><CircleHelp size={17}/>{tr(lang, 'Documentation')}</a>
-      <div className="sidebar-bottom"><div className="profile"><div className="avatar">{(session.user.email?.[0] ?? 'U').toUpperCase()}</div><div><b title={session.user.email ?? ""}>{session.user.email}</b><small>{membership?.role ?? 'No role assigned'}</small></div><button className="mini-icon" title="Sign out" onClick={signOut}><LogOut size={15}/></button></div></div>
-    </aside>
-    <main className="main">
-      <header className="topbar"><div className="crumb">{tr(lang, 'Workspace')} <span>/</span> <b>{tr(lang, page)}</b></div><div className="top-actions"><button className="search search-btn" onClick={() => setPalette(true)} aria-label="Open command palette"><Search size={15}/><span>{tr(lang, 'Search or jump to…')}</span><kbd>Ctrl K</kbd></button><button className="icon-btn" aria-label="Toggle theme" title="Theme" onClick={() => setPrefs({ theme: prefs.theme === 'dark' ? 'light' : 'dark' })}>{prefs.theme === 'dark' ? <Sun size={18}/> : <Moon size={18}/>}</button><button className="icon-btn" aria-label="Language" title="العربية / English" onClick={() => setPrefs({ lang: prefs.lang === 'en' ? 'ar' : 'en' })}><Languages size={18}/></button><div className="bell-wrap" ref={bellRef}><button className="icon-btn" aria-label="Alerts" aria-haspopup="menu" aria-expanded={bellOpen} onClick={() => setBellOpen(o => !o)}><Bell size={18}/>{openAlerts > 0 && <i/>}</button>
+      <nav className="tn-tabs" aria-label="Primary">{nav.filter(i => ['Overview','Devices','Topology','Virtualization','Traffic','Alerts','Logs','Uptime'].includes(i.label)).map(item => <button key={item.label} className={page === item.label ? 'tn-tab on' : 'tn-tab'} aria-current={page === item.label ? 'page' : undefined} aria-label={tr(lang, item.label)} title={tr(lang, item.label)} onClick={() => go(item.label)}><item.icon size={16}/><span>{tr(lang, item.label)}</span>{item.label === 'Alerts' && openAlerts > 0 && <i className="nav-dot"/>}</button>)}
+        <div className="tn-more" ref={moreRef}><button className={['Reports','Audit log','Sites & Networks','Platform','Settings','NOC wall'].includes(page) ? 'tn-tab on' : 'tn-tab'} aria-haspopup="menu" aria-expanded={moreOpen} onClick={() => setMoreOpen(o => !o)}><MoreHorizontal size={16}/><span>{tr(lang, 'More')}</span><ChevronDown size={14}/></button>
+          {moreOpen && <div className="tn-menu" role="menu">
+            {[['INSIGHTS', ['Reports','Audit log']], ['MANAGE', ['Sites & Networks', ...(membership && ['owner','admin'].includes(membership.role) ? ['Platform'] : [])]]].map(([group, labels]) => <div key={group as string}><div className="ws-menu-label">{tr(lang, group as string)}</div>{[...nav, adminNav].filter(i => (labels as string[]).includes(i.label)).map(item => <button key={item.label} role="menuitem" className={page === item.label ? 'ws-item sel' : 'ws-item'} onClick={() => { setMoreOpen(false); go(item.label); }}><item.icon size={16}/><span><b>{tr(lang, item.label)}</b></span></button>)}</div>)}
+            <div className="ws-sep"/>
+            <button role="menuitem" className={page === 'Settings' ? 'ws-item sel' : 'ws-item'} onClick={() => { setMoreOpen(false); go('Settings'); }}><Settings size={16}/><span><b>{tr(lang, 'Settings')}</b></span></button>
+            <button role="menuitem" className={page === 'NOC wall' ? 'ws-item sel' : 'ws-item'} onClick={() => { setMoreOpen(false); go('NOC wall'); }}><MonitorUp size={16}/><span><b>{tr(lang, 'NOC wall')}</b></span></button>
+            <a role="menuitem" className="ws-item" href="https://github.com/elite-tech240/elite-network-intelligence/tree/main/docs" target="_blank" rel="noreferrer"><CircleHelp size={16}/><span><b>{tr(lang, 'Documentation')}</b></span></a>
+          </div>}</div>
+      </nav>
+      <div className="top-actions"><button className="icon-btn tn-search" onClick={() => setPalette(true)} aria-label="Search or jump to (Ctrl K)" title="Search · Ctrl K"><Search size={18}/></button><button className="icon-btn" aria-label="Toggle theme" title="Theme" onClick={() => setPrefs({ theme: prefs.theme === 'dark' ? 'light' : 'dark' })}>{prefs.theme === 'dark' ? <Sun size={18}/> : <Moon size={18}/>}</button><button className="icon-btn" aria-label="Language" title="العربية / English" onClick={() => setPrefs({ lang: prefs.lang === 'en' ? 'ar' : 'en' })}><Languages size={18}/></button><div className="bell-wrap" ref={bellRef}><button className="icon-btn" aria-label="Alerts" aria-haspopup="menu" aria-expanded={bellOpen} onClick={() => setBellOpen(o => !o)}><Bell size={18}/>{openAlerts > 0 && <i/>}</button>
         {bellOpen && <div className="bell-menu" role="menu"><div className="bell-menu-head"><b>Alerts</b><span className="muted">{openAlerts} open</span></div>
           {recentAlerts.length ? recentAlerts.map(a => <button key={a.id} role="menuitem" className="bell-item" onClick={() => { setBellOpen(false); go('Alerts'); }}><span className={`bell-sev ${a.severity}`}/><span><b>{a.title}</b><small>{new Date(a.triggered_at).toLocaleString()}</small></span></button>) : <p className="bell-empty">Nothing open right now.</p>}
           <button role="menuitem" className="bell-viewall" onClick={() => { setBellOpen(false); go('Alerts'); }}>View all alerts</button>
@@ -218,14 +221,16 @@ export default function App() {
           <button role="menuitem" className="ws-item" onClick={() => { setAcctOpen(false); go('Settings'); }}><Settings size={16}/><span>Settings</span></button>
           <div className="ws-sep"/>
           <button role="menuitem" className="ws-item danger" onClick={() => { setAcctOpen(false); signOut(); }}><LogOut size={16}/><span>Sign out</span></button>
-        </div>}</div></div></header>
+        </div>}</div></div>
+    </header>
+    <main className="main">
       <section className="content">
-        <div className="page-heading"><div><div className="eyebrow">{tr(lang, 'NETWORK OPERATIONS CENTER')}</div><h1>{title}</h1><p>{pageDescription(page)}</p></div></div>
+        <div className="page-heading"><div><div className="eyebrow">{page === 'Overview' && <span className="lv-live"/>}{page === 'Overview' ? (sites.length === 1 ? `Live · ${sites[0].name}` : 'Live · Network operations center') : tr(lang, 'NETWORK OPERATIONS CENTER')}</div><h1>{page === 'Overview' ? 'Your network, right now' : title}</h1><p>{pageDescription(page)}</p></div></div>
         {notice && <div className="notice-banner">{notice}<button onClick={() => setNotice('')}>Dismiss</button></div>}
         {!membership ? <div className="panel access-panel"><div className="empty-icon"><LockKeyhole size={23}/></div><h2>No workspace access yet</h2><p>Your account is signed in, but it has not been added to an organization. Ask the system owner to assign your account.</p></div> : <>
           <Flash kind="error" msg={dataError ? 'Could not load workspace data: ' + dataError : ''}/>
           {dataLoading && <Skeleton rows={3}/>}
-          {page === 'Overview' && <Overview devices={nonEsxiDevices} sites={sites} networks={networks} online={online} loading={dataLoading} go={go} organizationId={membership.organization_id} prefs={prefs} setPrefs={setPrefs}/>}
+          {page === 'Overview' && <LiveOverview devices={nonEsxiDevices} hosts={devices.filter(d => d.device_type === 'esxi_host')} sites={sites} networks={networks} loading={dataLoading} go={go} organizationId={membership.organization_id} prefs={prefs} setPrefs={setPrefs}/>}
           {page === 'Devices' && <DevicesPage devices={nonEsxiDevices} archivedDevices={archivedDevices} loading={dataLoading} organizationId={membership.organization_id} role={membership.role} accessToken={session.access_token} onRefresh={refresh} sites={sites}/>}
           {page === 'Topology' && <TopologyPage sites={sites} networks={networks} devices={nonEsxiDevices}/>}
           {page === 'Virtualization' && <VirtualizationPage devices={devices} sites={sites} organizationId={membership.organization_id} accessToken={session.access_token} role={membership.role}/>}
@@ -290,47 +295,6 @@ function AuthScreen({configured, email, setEmail, password, setPassword, showPas
 }
 
 function pageDescription(page:string) { return ({Overview:'Monitor the health and activity of your network infrastructure.',Devices:'Every enrolled endpoint and its latest reported status.',Topology:'Understand how your sites, networks, and devices are connected.',Traffic:'Network traffic analytics and telemetry.',Alerts:'Review incidents and configure alerting workflows.',Logs:'Warnings, errors and failed sign-ins collected from your devices.',Uptime:'Check that your websites and services are reachable.',Reports:'Availability, usage and incident summaries.','Audit log':'A record of who changed what in this workspace.',Platform:'Health of the monitoring service itself.', 'Sites & Networks':'Manage the physical sites and logical networks in your workspace.',Settings:'Account identity, workspace permissions, and system administration.'} as Record<string,string>)[page] ?? ''; }
-function Kpi({icon,label,value,sub,tone,onClick}:{icon:React.ReactNode;label:string;value:React.ReactNode;sub:string;tone:string;onClick:()=>void}) {
- return <button className={`ov-kpi ${tone}`} onClick={onClick}><span className="ov-kpi-icon">{icon}</span><span className="ov-kpi-label">{label}</span><strong>{value}</strong><small>{sub}</small><ArrowUpRight className="ov-kpi-go" size={16}/></button>;
-}
-function Overview({devices,sites,networks,online,loading,go,organizationId,prefs,setPrefs}:{devices:Device[];sites:Site[];networks:Net[];online:number;loading:boolean;go:(s:string,tab?:string)=>void;organizationId:string;prefs:Prefs;setPrefs:(p:Partial<Prefs>)=>void}) {
- const [rows,setRows]=useState<any[]>([]),[counts,setCounts]=useState({uptime:0,channels:0}),[alerts,setAlerts]=useState<any[]>([]);
- useEffect(()=>{let on=true;if(!supabase)return;const load=()=>{supabase!.from('device_metrics').select('cpu_percent,net_recv_bps,net_sent_bps,recorded_at').eq('organization_id',organizationId).gte('recorded_at',new Date(Date.now()-3600000).toISOString()).order('recorded_at').limit(1500).then(({data})=>{if(on)setRows(data??[]);});supabase!.from('alert_events').select('id,title,severity,triggered_at,status').eq('organization_id',organizationId).in('status',['open','acknowledged']).order('triggered_at',{ascending:false}).limit(5).then(({data})=>{if(on)setAlerts(data??[]);});Promise.all([supabase!.from('uptime_checks').select('id',{count:'exact',head:true}).eq('organization_id',organizationId),supabase!.from('notification_channels').select('id',{count:'exact',head:true}).eq('organization_id',organizationId)]).then(([a,b])=>{if(on)setCounts({uptime:a.count??0,channels:b.count??0});});};load();const t=window.setInterval(load,1000);const ch=supabase!.channel('metrics-live-'+organizationId).on('postgres_changes',{event:'INSERT',schema:'public',table:'device_metrics',filter:'organization_id=eq.'+organizationId},(p:any)=>{const r=p.new;if(!on||!r?.recorded_at)return;setRows(prev=>{const cut=Date.now()-3600000;const next=[...prev,{cpu_percent:r.cpu_percent,net_recv_bps:r.net_recv_bps,net_sent_bps:r.net_sent_bps,recorded_at:r.recorded_at}];return next.filter(x=>new Date(x.recorded_at).getTime()>=cut);});}).subscribe();return()=>{on=false;window.clearInterval(t);supabase!.removeChannel(ch);};},[organizationId]);
- const series=useMemo(()=>{const b=new Map<number,{c:number[];n:number[]}>();rows.forEach(r=>{const k=Math.floor(new Date(r.recorded_at).getTime()/60000);const e=b.get(k)??{c:[],n:[]};if(r.cpu_percent!=null)e.c.push(Number(r.cpu_percent));e.n.push(Number(r.net_recv_bps??0)+Number(r.net_sent_bps??0));b.set(k,e);});const avg=(x:number[])=>x.length?x.reduce((p,q)=>p+q,0)/x.length:null;const keys=[...b.keys()].sort((x,y)=>x-y);return{cpu:keys.map(k=>({t:k*60000,v:avg(b.get(k)!.c)})) as Point[],net:keys.map(k=>({t:k*60000,v:avg(b.get(k)!.n)})) as Point[]};},[rows]);
- const lastCpu=[...series.cpu].reverse().find(p=>p.v!=null)?.v,lastNet=[...series.net].reverse().find(p=>p.v!=null)?.v;
- const offline=Math.max(0,devices.length-online);
- const availability=devices.length?Math.round((online/devices.length)*100):0;
- const workstation=devices.filter(d=>d.device_type==='workstation').length;
- const steps=[{id:'site',label:'Add your first site',done:sites.length>0,go:()=>go('Sites & Networks','sites')},{id:'net',label:'Add a network (CIDR range)',done:networks.length>0,go:()=>go('Sites & Networks','networks')},{id:'agent',label:'Install an agent on a device',done:devices.length>0,go:()=>go('Sites & Networks','agents')},{id:'uptime',label:'Create an uptime check',done:counts.uptime>0,go:()=>go('Uptime')},{id:'notify',label:'Set up a notification channel',done:counts.channels>0,go:()=>go('Settings','notify')}];
- const v=(x:React.ReactNode)=>loading?'—':x;
- return <div className="ov">
-  <div className="ov-kpis">
-   <Kpi tone="orange" icon={<Boxes size={18}/>} label="Total devices" value={v(<Counter value={devices.length}/>)} sub="Registered endpoints" onClick={()=>go('Devices')}/>
-   <Kpi tone="green" icon={<Wifi size={18}/>} label="Online" value={v(<Counter value={online}/>)} sub="Reporting right now" onClick={()=>go('Devices')}/>
-   <Kpi tone={offline?'red':'muted'} icon={<Activity size={18}/>} label="Offline" value={v(<Counter value={offline}/>)} sub={offline?'Needs attention':'Everything is reporting'} onClick={()=>go('Devices')}/>
-   <Kpi tone="blue" icon={<Network size={18}/>} label="Networks / Sites" value={v(<><Counter value={networks.length}/><em> / {sites.length}</em></>)} sub="Configured infrastructure" onClick={()=>go('Sites & Networks')}/>
-  </div>
-  {!prefs.onboardDone&&<Checklist steps={steps} lang={prefs.lang} onDismiss={()=>setPrefs({onboardDone:true})}/>}
-  <div className="ov-row two">
-   <section className="panel ov-card"><div className="card-head"><div><h3>Fleet health</h3><p>Based on the latest device heartbeat</p></div><button className="text-button" onClick={()=>go('Devices')}>Inventory →</button></div>
-    <div className="ov-health"><div className="health-ring" style={{'--health-value':availability} as React.CSSProperties}><div><strong>{v(availability+'%')}</strong><small>Online rate</small></div></div>
-     <ul className="ov-legend"><li><i className="g"/>Online<b>{v(online)}</b></li><li><i className="r"/>Offline<b>{v(offline)}</b></li><li><i className="m"/>Workstations<b>{v(workstation)}</b></li><li><i className="m"/>Servers & other<b>{v(Math.max(0,devices.length-workstation))}</b></li></ul></div></section>
-   <section className="panel ov-card"><div className="card-head"><div><h3>Activity</h3><p>Averages across all devices, last hour</p></div><button className="text-button" onClick={()=>go('Traffic')}>Traffic →</button></div>
-    <div className="ov-metrics"><div><div className="ov-metric-head"><span>Average CPU</span><strong>{lastCpu==null?'—':Math.round(lastCpu)+'%'}</strong></div><LineChart points={series.cpu} color="#f5630f" height={150} max={100} unit="%"/></div><div><div className="ov-metric-head"><span>Network throughput</span><strong>{lastNet==null?'—':fmtBps(lastNet)}</strong></div><LineChart points={series.net} color="#5ba6ff" height={150} format={fmtBps}/></div></div></section>
-  </div>
-  <div className="ov-row split">
-   <section className="panel ov-card"><div className="card-head"><div><h3>Recently active devices</h3><p>Latest endpoints in your workspace</p></div><button className="text-button" onClick={()=>go('Devices')}>View all →</button></div>{loading?<Skeleton rows={3}/>:devices.length?<ul className="ov-devices">{devices.slice(0,6).map(d=><li key={d.id}><span className="device-icon"><Server size={15}/></span><div><b>{d.hostname}</b><small>{d.ip_address??'—'} · {d.device_type??'device'}</small></div><span className={`status-pill ${deviceStatus(d)==='online'?'online':deviceStatus(d)==='offline'?'offline':'pending'}`}><i/>{deviceStatus(d)}</span><small className="ov-seen">{d.last_seen_at?new Date(d.last_seen_at).toLocaleString():'Never'}</small></li>)}</ul>:<EmptyState icon={<Boxes size={22}/>} title="No devices yet" text="Install the agent and it will appear here."/>}</section>
-   <div className="ov-stack">
-    <section className="panel ov-card"><div className="card-head"><div><h3>Open alerts</h3><p>Needs a look</p></div><button className="text-button" onClick={()=>go('Alerts')}>All alerts →</button></div>
-     {alerts.length?<ul className="ov-alerts">{alerts.map(a=><li key={a.id}><span className={`sev sev-${a.severity}`}>{a.severity}</span><b>{a.title}</b><small>{new Date(a.triggered_at).toLocaleString()}</small></li>)}</ul>:<EmptyState icon={<ShieldCheck size={22}/>} title="All clear" text="No open alerts right now."/>}</section>
-    <section className="panel ov-card"><div className="card-head"><div><h3>Quick access</h3></div></div>
-     <Quick icon={<Network/>} title="Network topology" desc="Explore sites and segments" onClick={()=>go('Topology')}/>
-     <Quick icon={<Activity/>} title="Traffic analytics" desc="Review network counters" onClick={()=>go('Traffic')}/>
-     <Quick icon={<Globe2/>} title="Uptime checks" desc="Websites and ports" onClick={()=>go('Uptime')}/></section>
-   </div>
-  </div>
- </div>;
-}
 function DevicesPage({devices,archivedDevices,loading,organizationId,role,accessToken,onRefresh,sites}:{sites:Site[];devices:Device[];archivedDevices:Device[];loading:boolean;organizationId:string;role:Membership['role'];accessToken:string;onRefresh:()=>void}) {
  const [openId,setOpenId]=useState(''),[filter,setFilter]=useState('all'),[metrics,setMetrics]=useState<any[]>([]),[actionError,setActionError]=useState(''),[actionMessage,setActionMessage]=useState(''),[busyDevice,setBusyDevice]=useState(''),[tab,setTab]=useState('inventory');
  const filtered=useMemo(()=>devices.filter(d=>filter==='all'||deviceStatus(d)===filter),[devices,filter]);
@@ -516,5 +480,3 @@ function TeamMembers({organizationId,role,accessToken,currentUserId}:{organizati
 function PageTabs({items,active,onChange}:{items:{id:string;label:string}[];active:string;onChange:(id:string)=>void}) {
  return <div className="page-tabs" role="tablist">{items.map(v=><button key={v.id} type="button" role="tab" aria-selected={active===v.id} className={active===v.id?'page-tab active':'page-tab'} onClick={()=>onChange(v.id)}>{v.label}</button>)}</div>;
 }
-
-function Quick({icon,title,desc,onClick}:{icon:React.ReactNode;title:string;desc:string;onClick:()=>void}) { return <button className="quick-action" onClick={onClick}><span className="quick-icon">{icon}</span><span><b>{title}</b><small>{desc}</small></span><span className="arrow">→</span></button>; }
