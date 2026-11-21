@@ -98,6 +98,24 @@ export function Select({ value, onChange, children, className = '', disabled, id
 }
 
 /* ---------- loading and empty states ---------- */
+export function Counter({ value }: { value: number }) {
+  const [shown, setShown] = useState(value);
+  const from = useRef(value), start = useRef(0), raf = useRef(0);
+  useEffect(() => {
+    if (matchMedia('(prefers-reduced-motion: reduce)').matches) { setShown(value); return; }
+    from.current = shown; start.current = 0;
+    const step = (t: number) => {
+      if (!start.current) start.current = t;
+      const k = Math.min(1, (t - start.current) / 650), e = 1 - Math.pow(1 - k, 3);
+      setShown(Math.round(from.current + (value - from.current) * e));
+      if (k < 1) raf.current = requestAnimationFrame(step);
+    };
+    raf.current = requestAnimationFrame(step);
+    return () => cancelAnimationFrame(raf.current);
+  }, [value]);
+  return <>{shown}</>;
+}
+
 export function Skeleton({ rows = 4 }: { rows?: number }) {
   return <div className="skeleton" aria-hidden="true">{Array.from({ length: rows }, (_, i) => <i key={i} style={{ width: `${92 - (i % 3) * 14}%` }}/>)}</div>;
 }

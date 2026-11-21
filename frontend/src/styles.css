@@ -614,3 +614,46 @@ small,.muted{font-size:var(--fs-sm)}
 
 .primary-action,.secondary-action,.danger-action,.danger-solid{display:inline-flex;align-items:center;justify-content:center;gap:8px}
 .modal .field>span{display:block}
+
+/* v1.3 — Live tape ambience + Data draw entrance */
+.shell{position:relative;isolation:isolate}
+.fx-tape{position:absolute;inset:0;z-index:0;pointer-events:none;overflow:hidden;
+  background:repeating-linear-gradient(90deg,transparent 0 58px,#f5630f0f 58px 60px);
+  animation:tape-drift 14s linear infinite;opacity:.55}
+.shell>*:not(.fx-tape){position:relative;z-index:1}
+@keyframes tape-drift{to{background-position:-60px 0}}
+
+.page-panel,.panel{position:relative}
+.ov-row .panel::before,.page-panel::before{content:'';position:absolute;inset-inline:0;top:0;height:2px;
+  background:linear-gradient(90deg,transparent,#f5630f,transparent);transform:translateX(-100%);
+  animation:tape-rail 7s linear infinite;opacity:.65;z-index:2;border-radius:var(--r) var(--r) 0 0}
+.ov-row+.ov-row .panel::before{animation-delay:1.4s}
+.page-panel::before{animation-delay:.8s}
+@keyframes tape-rail{0%{transform:translateX(-100%)}55%,100%{transform:translateX(100%)}}
+
+/* charts draw themselves on mount, then sit still */
+.panel svg path[stroke]{stroke-dasharray:2400;stroke-dashoffset:2400;animation:draw-line 1.1s cubic-bezier(.4,0,.2,1) .15s forwards}
+.panel svg path[fill]:not([stroke]){animation:draw-fade .9s ease .5s both}
+.ov-metrics svg{animation:tape-shift 9s ease-in-out infinite}
+@keyframes draw-line{to{stroke-dashoffset:0}}
+@keyframes draw-fade{from{opacity:0}}
+@keyframes tape-shift{0%,100%{transform:translateX(0)}50%{transform:translateX(-1.5%)}}
+
+/* numbers and bars arrive with the data */
+.ov-kpi strong,.ov-metric-head strong{display:inline-block;animation:draw-pop .5s cubic-bezier(.2,1,.35,1) both}
+.ov-kpi:nth-child(2) strong{animation-delay:.07s}.ov-kpi:nth-child(3) strong{animation-delay:.14s}.ov-kpi:nth-child(4) strong{animation-delay:.21s}
+.onboarding-bar i{animation:draw-bar 1s cubic-bezier(.3,1,.4,1) both}
+.donut-ring{animation:draw-ring 1.2s cubic-bezier(.4,0,.2,1) both}
+@keyframes draw-pop{from{opacity:0;transform:translateY(9px) scale(.95)}}
+@keyframes draw-bar{from{width:0}}
+@keyframes draw-ring{from{stroke-dashoffset:999}}
+
+/* skeletons read as data on the way */
+.skeleton i{background:linear-gradient(90deg,#1d222a 0 40%,#2d343f 50%,#1d222a 60%)!important;background-size:260% 100%!important;animation:tape-shim 1.2s linear infinite}
+@keyframes tape-shim{to{background-position:-260% 0}}
+
+@media(prefers-reduced-motion:reduce){
+  .fx-tape,.panel::before,.page-panel::before,.ov-metrics svg,.skeleton i{animation:none!important}
+  .panel svg path[stroke]{stroke-dasharray:none;stroke-dashoffset:0;animation:none}
+  .ov-kpi strong,.ov-metric-head strong,.onboarding-bar i,.donut-ring{animation:none}
+}

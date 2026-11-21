@@ -8,7 +8,7 @@ type Net = { id: string; name: string; cidr: string | null; site_id: string };
 type Membership = { organization_id: string; role: 'owner' | 'admin' | 'operator' | 'viewer'; organizations?: { id: string; name: string }[] | null };
 import { supabase, configured, apiUrl, fmtBps } from './lib';
 import { AgentInstaller } from './AgentInstaller';
-import { Toaster, ConfirmHost, Flash, confirmDialog, toast, usePrefs, tr, CommandPalette, Drawer, Skeleton, EmptyState, useTable, Th, Pager, Checklist, Select, type Command, type Prefs } from './ui';
+import { Toaster, ConfirmHost, Flash, confirmDialog, toast, usePrefs, tr, CommandPalette, Drawer, Skeleton, EmptyState, useTable, Th, Pager, Checklist, Select, Counter, type Command, type Prefs } from './ui';
 import { LineChart, type Point } from './Chart';
 import { LogsPage, UptimePage, ReportsPage, AuditPage, PlatformPage, ChannelsPanel, MaintenancePanel, DiscoveryPanel, DeviceDetail, NocWall } from './Monitoring';
 const nav = [
@@ -147,7 +147,7 @@ export default function App() {
   if (!authReady) return <div className="auth-screen"><div className="auth-card"><div className="brand-mark auth-mark"><img src="/elite-mark.svg" alt="" /></div><p className="auth-subtitle">Loading secure session…</p></div></div>;
   if (!session) return <AuthScreen configured email={email} setEmail={setEmail} password={password} setPassword={setPassword} showPassword={showPassword} setShowPassword={setShowPassword} busy={busy} error={authError} notice={notice} resetMode={resetMode} setResetMode={setResetMode} onSubmit={resetMode ? sendReset : signIn} />;
 
-  return <div className="shell">
+  return <div className="shell"><div className="fx-tape" aria-hidden="true"/>
     <aside className="sidebar">
       <div className="brand"><div className="brand-mark"><img src="/elite-mark.svg" alt="" /></div><div><b>ELITE</b><span>NETWORK INTELLIGENCE</span></div></div>
       <div className="workspace-wrap" ref={wsRef}><button className="workspace" aria-haspopup="menu" aria-expanded={wsOpen} onClick={() => setWsOpen(o => !o)}><div className="workspace-icon">{orgName.slice(0, 2).toUpperCase()}</div><div><b>{orgName}</b><small>{membership ? `${membership.role} access` : 'No organization access'}</small></div><ChevronDown size={15}/></button>
@@ -235,10 +235,10 @@ function Overview({devices,sites,networks,online,loading,go,organizationId,prefs
  const v=(x:React.ReactNode)=>loading?'—':x;
  return <div className="ov">
   <div className="ov-kpis">
-   <Kpi tone="orange" icon={<Boxes size={18}/>} label="Total devices" value={v(devices.length)} sub="Registered endpoints" onClick={()=>go('Devices')}/>
-   <Kpi tone="green" icon={<Wifi size={18}/>} label="Online" value={v(online)} sub="Reporting right now" onClick={()=>go('Devices')}/>
-   <Kpi tone={offline?'red':'muted'} icon={<Activity size={18}/>} label="Offline" value={v(offline)} sub={offline?'Needs attention':'Everything is reporting'} onClick={()=>go('Devices')}/>
-   <Kpi tone="blue" icon={<Network size={18}/>} label="Networks / Sites" value={v(<>{networks.length}<em> / {sites.length}</em></>)} sub="Configured infrastructure" onClick={()=>go('Sites & Networks')}/>
+   <Kpi tone="orange" icon={<Boxes size={18}/>} label="Total devices" value={v(<Counter value={devices.length}/>)} sub="Registered endpoints" onClick={()=>go('Devices')}/>
+   <Kpi tone="green" icon={<Wifi size={18}/>} label="Online" value={v(<Counter value={online}/>)} sub="Reporting right now" onClick={()=>go('Devices')}/>
+   <Kpi tone={offline?'red':'muted'} icon={<Activity size={18}/>} label="Offline" value={v(<Counter value={offline}/>)} sub={offline?'Needs attention':'Everything is reporting'} onClick={()=>go('Devices')}/>
+   <Kpi tone="blue" icon={<Network size={18}/>} label="Networks / Sites" value={v(<><Counter value={networks.length}/><em> / {sites.length}</em></>)} sub="Configured infrastructure" onClick={()=>go('Sites & Networks')}/>
   </div>
   {!prefs.onboardDone&&<Checklist steps={steps} lang={prefs.lang} onDismiss={()=>setPrefs({onboardDone:true})}/>}
   <div className="ov-row two">
