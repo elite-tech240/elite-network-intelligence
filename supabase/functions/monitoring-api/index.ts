@@ -16,7 +16,7 @@ const admin = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, { auth: { pe
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-cron-secret",
-  "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+  "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
   "Content-Type": "application/json",
 };
 
@@ -53,7 +53,7 @@ async function signedInUser(req: Request) {
 }
 async function membership(userId: string, organizationId: string) {
   if (!/^[0-9a-f-]{36}$/i.test(organizationId)) return null;
-  const { data } = await admin.from("organization_members").select("role")
+  const { data } = await admin.from("organization_members").select("role,custom_role_id")
     .eq("organization_id", organizationId).eq("user_id", userId).maybeSingle();
   return data;
 }
@@ -64,6 +64,23 @@ async function requireMember(req: Request, organizationId: string, roles: string
   if (!member) throw new HttpError(403, "You do not have access to this workspace");
   if (!roles.includes(member.role)) throw new HttpError(403, "Your role does not allow this action");
   return { user, role: member.role as string };
+}
+// Granular-permissions check, backed by the has_permission() Postgres function.
+// Must run as the calling user (not the service role) so auth.uid() resolves inside it -
+// same reasoning as list_organization_members below.
+async function requirePermission(req: Request, organizationId: string, resource: string, action: string) {
+  const user = await signedInUser(req);
+  if (!user) throw new HttpError(401, "Valid user session required");
+  const member = await membership(user.id, organizationId);
+  if (!member) throw new HttpError(403, "You do not have access to this workspace");
+  const auth = req.headers.get("Authorization") || "";
+  const userClient = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+    global: { headers: { Authorization: auth } },
+    auth: { persistSession: false, autoRefreshToken: false },
+  });
+  const { data: allowed, error } = await userClient.rpc("has_permission", { p_org: organizationId, p_resource: resource, p_action: action });
+  if (error || !allowed) throw new HttpError(403, "Your role does not allow this action");
+  return { user, role: member.role as string, customRoleId: member.custom_role_id as string | null };
 }
 async function agentAuth(req: Request, deviceId: string) {
   const auth = req.headers.get("Authorization") || "";
@@ -552,8 +569,7 @@ async function handle(req: Request): Promise<Response> {
     const body = await readJson(req);
     const organizationId = String(body.organization_id || "");
     const siteId = String(body.site_id || "");
-    const member = await membership(user.id, organizationId);
-    if (!member || !["owner", "admin", "operator"].includes(member.role)) return fail("You do not have permission to enroll devices", 403);
+    await requirePermission(req, organizationId, "devices", "create");
     const { data: site } = await admin.from("sites").select("id").eq("id", siteId).eq("organization_id", organizationId).maybeSingle();
     if (!site) return fail("Site not found in this workspace", 404);
     const token = randomToken(36);
@@ -847,13 +863,11 @@ async function handle(req: Request): Promise<Response> {
 
   const deviceActionMatch = path.match(new RegExp(`^/devices/${uuidPart}/(archive|restore|uninstall)$`, "i"));
   if (req.method === "POST" && deviceActionMatch) {
-    const user = await signedInUser(req);
-    if (!user) return fail("Valid user session required", 401);
     const deviceId = deviceActionMatch[1], action = deviceActionMatch[2].toLowerCase();
     const { data: device } = await admin.from("devices").select("id,organization_id,hostname,last_seen_at,archived_at,device_type,os_name").eq("id", deviceId).maybeSingle();
     if (!device) return fail("Device not found", 404);
-    const member = await membership(user.id, device.organization_id);
-    if (!member || !["owner", "admin"].includes(member.role)) return fail("Only owners and admins can manage devices", 403);
+    const permAction = action === "uninstall" ? "delete" : "edit";
+    const { user } = await requirePermission(req, device.organization_id, "devices", permAction);
     const online = Boolean(device.last_seen_at && Date.now() - new Date(device.last_seen_at).getTime() <= 120000);
     if (action === "archive") {
       if (device.archived_at) return fail("Device is already archived", 409);
@@ -883,13 +897,10 @@ async function handle(req: Request): Promise<Response> {
 
   const revokeMatch = path.match(new RegExp(`^/devices/${uuidPart}/revoke$`, "i"));
   if (req.method === "POST" && revokeMatch) {
-    const user = await signedInUser(req);
-    if (!user) return fail("Valid user session required", 401);
     const deviceId = revokeMatch[1];
     const { data: device } = await admin.from("devices").select("id,organization_id,hostname").eq("id", deviceId).maybeSingle();
     if (!device) return fail("Device not found", 404);
-    const member = await membership(user.id, device.organization_id);
-    if (!member || !["owner", "admin"].includes(member.role)) return fail("Only owners and admins can revoke device credentials", 403);
+    const { user } = await requirePermission(req, device.organization_id, "devices", "delete");
     const now = new Date().toISOString();
     const { error } = await admin.from("device_credentials").update({ revoked_at: now }).eq("device_id", deviceId);
     if (error) return fail("Could not revoke device credential", 500);
@@ -907,9 +918,8 @@ async function handle(req: Request): Promise<Response> {
     const role = String(body.role || "viewer");
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return fail("Enter a valid email address");
     if (!["admin", "operator", "viewer"].includes(role)) return fail("Invalid workspace role");
-    const member = await membership(user.id, organizationId);
-    if (!member || !["owner", "admin"].includes(member.role)) return fail("Only owners and admins can invite members", 403);
-    if (member.role === "admin" && role === "admin") return fail("Only the owner can grant admin access", 403);
+    const { role: callerRole } = await requirePermission(req, organizationId, "team", "create");
+    if (role === "admin" && callerRole !== "owner") return fail("Only the owner can grant admin access", 403);
     // redirectTo matters: without it Supabase falls back to the Site URL configured in the
     // Auth dashboard, which may not point anywhere that shows a "set your password" screen -
     // the invited person would otherwise land signed-in-but-passwordless on a generic page.
@@ -925,7 +935,7 @@ async function handle(req: Request): Promise<Response> {
 
   if (req.method === "GET" && path === "/team/members") {
     const organizationId = url.searchParams.get("organization_id") || "";
-    await requireMember(req, organizationId, ["owner", "admin"]);
+    await requirePermission(req, organizationId, "team", "view");
     // list_organization_members checks auth.uid() itself, so it must run as the calling user,
     // not as the service role (which has no auth.uid() and would always fail that check).
     const userClient = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
@@ -934,20 +944,32 @@ async function handle(req: Request): Promise<Response> {
     });
     const { data, error } = await userClient.rpc("list_organization_members", { p_org: organizationId });
     if (error) return fail("Could not load the member list", 500);
-    return json({ members: data || [] });
+    const { data: customInfo } = await admin.from("organization_members").select("user_id,custom_role_id,custom_roles(name)").eq("organization_id", organizationId);
+    const byUser = new Map((customInfo || []).map((r: any) => [r.user_id, { custom_role_id: r.custom_role_id, custom_role_name: r.custom_roles?.name ?? null }]));
+    const members = (data || []).map((m: any) => ({ ...m, ...(byUser.get(m.user_id) || { custom_role_id: null, custom_role_name: null }) }));
+    return json({ members });
   }
 
   if (req.method === "POST" && path === "/team/members/role") {
     const body = await readJson(req);
     const organizationId = String(body.organization_id || "");
     const targetUserId = String(body.user_id || "");
-    const newRole = String(body.role || "");
-    if (!["owner", "admin", "operator", "viewer"].includes(newRole)) return fail("Invalid workspace role");
-    const { user, role: callerRole } = await requireMember(req, organizationId, ["owner", "admin"]);
+    const newRoleRaw = String(body.role || "");
+    const isCustomRoleId = /^[0-9a-f-]{36}$/i.test(newRoleRaw);
+    if (!isCustomRoleId && !["owner", "admin", "operator", "viewer"].includes(newRoleRaw)) return fail("Invalid workspace role");
+    const { user, role: callerRole } = await requirePermission(req, organizationId, "team", "edit");
     if (targetUserId === user.id) return fail("You cannot change your own role", 400);
     const { data: target } = await admin.from("organization_members").select("role").eq("organization_id", organizationId).eq("user_id", targetUserId).maybeSingle();
     if (!target) return fail("That person is not a member of this workspace", 404);
-    if (callerRole === "admin") {
+    let customRoleId: string | null = null;
+    let newRole: string = newRoleRaw;
+    if (isCustomRoleId) {
+      const { data: customRole } = await admin.from("custom_roles").select("id,name").eq("id", newRoleRaw).eq("organization_id", organizationId).maybeSingle();
+      if (!customRole) return fail("Custom role not found in this workspace", 404);
+      customRoleId = customRole.id;
+      newRole = "custom";
+    }
+    if (callerRole !== "owner") {
       if (["owner", "admin"].includes(target.role)) return fail("Only the owner can change an admin's role", 403);
       if (["owner", "admin"].includes(newRole)) return fail("Only the owner can grant admin access", 403);
     }
@@ -955,21 +977,21 @@ async function handle(req: Request): Promise<Response> {
       const { count } = await admin.from("organization_members").select("user_id", { count: "exact", head: true }).eq("organization_id", organizationId).eq("role", "owner");
       if ((count || 0) <= 1) return fail("A workspace needs at least one owner", 409);
     }
-    const { error } = await admin.from("organization_members").update({ role: newRole }).eq("organization_id", organizationId).eq("user_id", targetUserId);
+    const { error } = await admin.from("organization_members").update({ role: newRole, custom_role_id: customRoleId }).eq("organization_id", organizationId).eq("user_id", targetUserId);
     if (error) return fail("Could not update that member's role", 500);
-    await audit(organizationId, "user", user.id, "update_member_role", "organization_member", targetUserId, { role: newRole });
-    return json({ ok: true, user_id: targetUserId, role: newRole });
+    await audit(organizationId, "user", user.id, "update_member_role", "organization_member", targetUserId, { role: newRole, custom_role_id: customRoleId });
+    return json({ ok: true, user_id: targetUserId, role: newRole, custom_role_id: customRoleId });
   }
 
   if (req.method === "POST" && path === "/team/members/remove") {
     const body = await readJson(req);
     const organizationId = String(body.organization_id || "");
     const targetUserId = String(body.user_id || "");
-    const { user, role: callerRole } = await requireMember(req, organizationId, ["owner", "admin"]);
+    const { user, role: callerRole } = await requirePermission(req, organizationId, "team", "delete");
     if (targetUserId === user.id) return fail("You cannot remove yourself from the workspace", 400);
     const { data: target } = await admin.from("organization_members").select("role").eq("organization_id", organizationId).eq("user_id", targetUserId).maybeSingle();
     if (!target) return fail("That person is not a member of this workspace", 404);
-    if (callerRole === "admin" && ["owner", "admin"].includes(target.role)) return fail("Only the owner can remove an owner or admin", 403);
+    if (callerRole !== "owner" && ["owner", "admin"].includes(target.role)) return fail("Only the owner can remove an owner or admin", 403);
     if (target.role === "owner") {
       const { count } = await admin.from("organization_members").select("user_id", { count: "exact", head: true }).eq("organization_id", organizationId).eq("role", "owner");
       if ((count || 0) <= 1) return fail("A workspace needs at least one owner", 409);
@@ -978,6 +1000,89 @@ async function handle(req: Request): Promise<Response> {
     if (error) return fail("Could not remove that member", 500);
     await audit(organizationId, "user", user.id, "remove_member", "organization_member", targetUserId, {});
     return json({ ok: true, user_id: targetUserId });
+  }
+
+  const PERMISSION_RESOURCES = ["devices", "sites", "networks", "alerts", "maintenance", "uptime", "notifications", "team", "platform"];
+  const PERMISSION_ACTIONS = ["can_view", "can_create", "can_edit", "can_delete"] as const;
+
+  if (req.method === "GET" && path === "/team/roles") {
+    const organizationId = url.searchParams.get("organization_id") || "";
+    await requirePermission(req, organizationId, "team", "view");
+    const { data: roles, error } = await admin.from("custom_roles").select("id,name,created_at").eq("organization_id", organizationId).order("name");
+    if (error) return fail("Could not load custom roles", 500);
+    const ids = (roles || []).map((r: any) => r.id);
+    const { data: perms } = ids.length ? await admin.from("role_permissions").select("role_id,resource,can_view,can_create,can_edit,can_delete").in("role_id", ids) : { data: [] as any[] };
+    const byRole = new Map<string, any[]>();
+    for (const p of perms || []) { const arr = byRole.get(p.role_id) || []; arr.push(p); byRole.set(p.role_id, arr); }
+    return json({ roles: (roles || []).map((r: any) => ({ ...r, permissions: byRole.get(r.id) || [] })) });
+  }
+
+  if (req.method === "POST" && path === "/team/roles") {
+    const body = await readJson(req);
+    const organizationId = String(body.organization_id || "");
+    const { user } = await requirePermission(req, organizationId, "team", "create");
+    const name = String(body.name || "").trim().slice(0, 80);
+    if (!name) return fail("Role name is required");
+    const permissions = Array.isArray(body.permissions) ? body.permissions : [];
+    const { data: role, error } = await admin.from("custom_roles").insert({ organization_id: organizationId, name }).select("id,name,created_at").single();
+    if (error || !role) return fail(error?.code === "23505" ? "A role with that name already exists" : "Could not create role", error?.code === "23505" ? 409 : 500);
+    const rows = permissions
+      .filter((p: any) => PERMISSION_RESOURCES.includes(String(p?.resource)))
+      .map((p: any) => ({
+        role_id: role.id, resource: String(p.resource),
+        can_view: Boolean(p.can_view), can_create: Boolean(p.can_create), can_edit: Boolean(p.can_edit), can_delete: Boolean(p.can_delete),
+      }));
+    if (rows.length) {
+      const { error: permError } = await admin.from("role_permissions").insert(rows);
+      if (permError) { await admin.from("custom_roles").delete().eq("id", role.id); return fail("Could not save role permissions", 500); }
+    }
+    await audit(organizationId, "user", user.id, "create_role", "custom_role", role.id, { name });
+    return json({ ok: true, role: { ...role, permissions: rows } }, 201);
+  }
+
+  const roleIdMatch = path.match(new RegExp(`^/team/roles/${uuidPart}$`, "i"));
+  if (req.method === "PUT" && roleIdMatch) {
+    const roleId = roleIdMatch[1];
+    const body = await readJson(req);
+    const organizationId = String(body.organization_id || "");
+    const { user } = await requirePermission(req, organizationId, "team", "edit");
+    const { data: role } = await admin.from("custom_roles").select("id").eq("id", roleId).eq("organization_id", organizationId).maybeSingle();
+    if (!role) return fail("Custom role not found in this workspace", 404);
+    if (body.name !== undefined) {
+      const name = String(body.name || "").trim().slice(0, 80);
+      if (!name) return fail("Role name is required");
+      const { error } = await admin.from("custom_roles").update({ name }).eq("id", roleId);
+      if (error) return fail(error.code === "23505" ? "A role with that name already exists" : "Could not rename role", error.code === "23505" ? 409 : 500);
+    }
+    if (Array.isArray(body.permissions)) {
+      const rows = body.permissions
+        .filter((p: any) => PERMISSION_RESOURCES.includes(String(p?.resource)))
+        .map((p: any) => ({
+          role_id: roleId, resource: String(p.resource),
+          can_view: Boolean(p.can_view), can_create: Boolean(p.can_create), can_edit: Boolean(p.can_edit), can_delete: Boolean(p.can_delete),
+        }));
+      await admin.from("role_permissions").delete().eq("role_id", roleId);
+      if (rows.length) {
+        const { error: permError } = await admin.from("role_permissions").insert(rows);
+        if (permError) return fail("Could not save role permissions", 500);
+      }
+    }
+    await audit(organizationId, "user", user.id, "update_role", "custom_role", roleId, {});
+    return json({ ok: true, role_id: roleId });
+  }
+
+  if (req.method === "DELETE" && roleIdMatch) {
+    const roleId = roleIdMatch[1];
+    const organizationId = url.searchParams.get("organization_id") || "";
+    const { user } = await requirePermission(req, organizationId, "team", "delete");
+    const { data: role } = await admin.from("custom_roles").select("id").eq("id", roleId).eq("organization_id", organizationId).maybeSingle();
+    if (!role) return fail("Custom role not found in this workspace", 404);
+    const { count } = await admin.from("organization_members").select("user_id", { count: "exact", head: true }).eq("custom_role_id", roleId);
+    if ((count || 0) > 0) return fail("Reassign the members using this role before deleting it", 409);
+    const { error } = await admin.from("custom_roles").delete().eq("id", roleId);
+    if (error) return fail("Could not delete role", 500);
+    await audit(organizationId, "user", user.id, "delete_role", "custom_role", roleId, {});
+    return json({ ok: true, role_id: roleId });
   }
 
   if (req.method === "POST" && path === "/auth/reset-password") {
@@ -1001,7 +1106,7 @@ async function handle(req: Request): Promise<Response> {
     const body = await readJson(req);
     const { data: check } = await admin.from("uptime_checks").select("*").eq("id", String(body.check_id || "")).maybeSingle();
     if (!check) return fail("Check not found", 404);
-    await requireMember(req, check.organization_id, ["owner", "admin", "operator"]);
+    await requirePermission(req, check.organization_id, "uptime", "edit");
     const result = await runCheck(check);
     await applyCheckResult(check, result);
     return json({ ok: true, ...result });
@@ -1011,7 +1116,7 @@ async function handle(req: Request): Promise<Response> {
     const body = await readJson(req);
     const { data: channel } = await admin.from("notification_channels").select("id,organization_id,channel_type,config").eq("id", String(body.channel_id || "")).maybeSingle();
     if (!channel) return fail("Channel not found", 404);
-    const { user } = await requireMember(req, channel.organization_id, ["owner", "admin"]);
+    const { user } = await requirePermission(req, channel.organization_id, "notifications", "edit");
     const result = await deliver(channel, { kind: "test", severity: "info", title: "[TEST] Elite Network Intelligence notification", text: "This is a test notification. If you can read it, this channel works.",
       html: emailShell("Test notification", `${severityBadge("info", "test")}<h2 style="margin:0 0 10px;color:#fff;font-size:17px">Channel works</h2><p style="margin:0;color:#aebdd2">This is a test notification. If you can read it, this channel is wired up correctly.</p>${emailButton("Open the dashboard", APP_URL)}`) });
     await logDelivery(channel.organization_id, channel.id, null, "test", result);
@@ -1022,13 +1127,13 @@ async function handle(req: Request): Promise<Response> {
   if (req.method === "GET" && path === "/reports/summary") {
     const organizationId = url.searchParams.get("organization_id") || "";
     const days = Math.min(90, Math.max(1, Number(url.searchParams.get("days")) || 7));
-    await requireMember(req, organizationId, ["owner", "admin", "operator", "viewer"]);
+    await requirePermission(req, organizationId, "reports", "view");
     return json(await buildReport(organizationId, days));
   }
 
   if (req.method === "GET" && path === "/platform/status") {
     const organizationId = url.searchParams.get("organization_id") || "";
-    await requireMember(req, organizationId, ["owner", "admin"]);
+    await requirePermission(req, organizationId, "platform", "view");
     const [{ data: overview, error }, { data: events }, { data: deliveries }] = await Promise.all([
       admin.rpc("platform_overview", { p_org: organizationId }),
       admin.from("platform_events").select("id,level,source,message,created_at").eq("organization_id", organizationId).order("created_at", { ascending: false }).limit(20),

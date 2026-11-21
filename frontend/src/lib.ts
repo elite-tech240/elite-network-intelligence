@@ -39,7 +39,7 @@ export async function publishedAgentVersion(): Promise<string> {
   return data?.version ?? LATEST_AGENT_VERSION;
 }
 
-export type Role = 'owner' | 'admin' | 'operator' | 'viewer';
+export type Role = 'owner' | 'admin' | 'operator' | 'viewer' | 'custom';
 
 export async function api<T = any>(path: string, token: string, init: { method?: string; body?: unknown } = {}): Promise<T> {
   if (!apiUrl) throw new Error('VITE_API_URL is not configured.');

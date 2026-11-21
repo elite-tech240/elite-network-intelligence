@@ -44,7 +44,7 @@ function HostCard({ host, vms, onOpen }: { host: Device; vms: Device[]; onOpen: 
   </div>;
 }
 
-export function VirtualizationPage({ devices, sites, organizationId, accessToken, role }: { devices: Device[]; sites: Site[]; organizationId: string; accessToken: string; role: 'owner' | 'admin' | 'operator' | 'viewer' }) {
+export function VirtualizationPage({ devices, sites, organizationId, accessToken, role }: { devices: Device[]; sites: Site[]; organizationId: string; accessToken: string; role: 'owner' | 'admin' | 'operator' | 'viewer' | 'custom' }) {
   const hosts = devices.filter(d => d.device_type === 'esxi_host');
   const vmsOf = (hostId: string) => devices.filter(d => d.device_type === 'esxi_vm' && d.parent_device_id === hostId);
   const [openId, setOpenId] = useState('');
