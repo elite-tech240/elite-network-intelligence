@@ -69,9 +69,10 @@ Deno.serve(async (req: Request) => {
     const status = powerState === "poweredon" ? "online" : powerState === "poweredoff" ? "offline" : "unknown";
 
     const { data: existing } = await admin.from("devices")
-      .select("id").eq("parent_device_id", hostId).eq("esxi_moid", moid).maybeSingle();
+      .select("id,status").eq("parent_device_id", hostId).eq("esxi_moid", moid).maybeSingle();
 
     let vmDeviceId = existing?.id as string | undefined;
+    const previousStatus = existing?.status as string | undefined;
     if (!vmDeviceId) {
       const { data: created, error } = await admin.from("devices").insert({
         organization_id: host.organization_id, site_id: host.site_id, parent_device_id: hostId,
@@ -82,6 +83,26 @@ Deno.serve(async (req: Request) => {
       vmDeviceId = created.id;
     } else {
       await admin.from("devices").update({ hostname: name, status, last_seen_at: now, archived_at: null }).eq("id", vmDeviceId);
+      // A VM that just powered off/on: raise or clear an alert, the same way a host going offline does.
+      if (status !== previousStatus && (status === "offline" || previousStatus === "offline")) {
+        if (status === "offline") {
+          const { data: rule } = await admin.from("alert_rules").select("id")
+            .eq("organization_id", host.organization_id).eq("metric", "esxi_vm_off").eq("enabled", true).maybeSingle();
+          if (rule) {
+            const { data: open } = await admin.from("alert_events").select("id").eq("device_id", vmDeviceId)
+              .eq("source", "esxi_vm").in("status", ["open", "acknowledged"]).limit(1);
+            if (!open?.length) {
+              await admin.from("alert_events").insert({
+                organization_id: host.organization_id, device_id: vmDeviceId, rule_id: rule.id, source: "esxi_vm",
+                severity: "warning", title: `VM powered off: ${name}`, message: `${name} turned off.`,
+              });
+            }
+          }
+        } else {
+          await admin.from("alert_events").update({ status: "resolved", resolved_at: now })
+            .eq("device_id", vmDeviceId).eq("source", "esxi_vm").in("status", ["open", "acknowledged"]);
+        }
+      }
     }
 
     const { error: metricError } = await admin.from("device_metrics").insert({

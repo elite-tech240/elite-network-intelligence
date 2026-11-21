@@ -309,24 +309,168 @@ async function detectOfflineDevices(): Promise<number> {
   return flagged;
 }
 
+async function detectInterfaceIssues(): Promise<number> {
+  const { data: rules } = await admin.from("alert_rules").select("id,organization_id,name,metric,threshold")
+    .in("metric", ["interface_errors", "interface_down"]).eq("enabled", true);
+  let flagged = 0;
+  const nowIso = new Date().toISOString();
+  for (const rule of rules || []) {
+    const maintenance = await inMaintenance(rule.organization_id);
+    const byDevice = new Map<string, string>();
+    if (rule.metric === "interface_down") {
+      const { data: ifaces } = await admin.from("device_interfaces").select("device_id,name")
+        .eq("organization_id", rule.organization_id).eq("is_physical", true).eq("oper_status", "down")
+        .gte("last_seen_at", new Date(Date.now() - 15 * 60000).toISOString()).limit(500);
+      const names = new Map<string, string[]>();
+      for (const i of ifaces || []) { const arr = names.get(i.device_id) || []; arr.push(i.name); names.set(i.device_id, arr); }
+      for (const [deviceId, list] of names) byDevice.set(deviceId, `Interface(s) down: ${list.slice(0, 5).join(", ")}${list.length > 5 ? ` and ${list.length - 5} more` : ""}.`);
+    } else {
+      const since = new Date(Date.now() - 10 * 60000).toISOString();
+      const { data: ifaces } = await admin.from("device_interfaces").select("id,device_id").eq("organization_id", rule.organization_id);
+      const ifaceIds = (ifaces || []).map((i: any) => i.id);
+      const deviceOf = new Map((ifaces || []).map((i: any) => [i.id, i.device_id]));
+      if (ifaceIds.length) {
+        const { data: metrics } = await admin.from("interface_metrics").select("interface_id,in_errors,out_errors,in_discards,out_discards").in("interface_id", ifaceIds).gte("recorded_at", since);
+        const totals = new Map<string, number>();
+        for (const m of metrics || []) {
+          const n = (Number(m.in_errors) || 0) + (Number(m.out_errors) || 0) + (Number(m.in_discards) || 0) + (Number(m.out_discards) || 0);
+          const deviceId = deviceOf.get(m.interface_id) as string;
+          totals.set(deviceId, (totals.get(deviceId) || 0) + n);
+        }
+        for (const [deviceId, total] of totals) {
+          if (rule.threshold != null && total < rule.threshold) continue;
+          byDevice.set(deviceId, `${total} interface errors/discards in the last 10 minutes (threshold ${rule.threshold}).`);
+        }
+      }
+    }
+    for (const [deviceId, message] of byDevice) {
+      const { data: active } = await admin.from("alert_events").select("id").eq("device_id", deviceId).eq("rule_id", rule.id).in("status", ["open", "acknowledged"]).limit(1);
+      if (active?.length || maintenance) continue;
+      const { data: dev } = await admin.from("devices").select("hostname").eq("id", deviceId).maybeSingle();
+      const { error } = await admin.from("alert_events").insert({
+        organization_id: rule.organization_id, device_id: deviceId, rule_id: rule.id, source: "interface",
+        severity: "warning", title: `${rule.name}: ${dev?.hostname ?? "device"}`, message,
+      });
+      if (!error) flagged += 1;
+    }
+    const { data: openAlerts } = await admin.from("alert_events").select("id,device_id").eq("rule_id", rule.id).in("status", ["open", "acknowledged"]);
+    for (const a of openAlerts || []) {
+      if (!byDevice.has(a.device_id)) await admin.from("alert_events").update({ status: "resolved", resolved_at: nowIso }).eq("id", a.id);
+    }
+  }
+  return flagged;
+}
+
+async function detectOutdatedAgents(): Promise<number> {
+  const { data: rules } = await admin.from("alert_rules").select("id,organization_id,name").eq("metric", "agent_outdated").eq("enabled", true);
+  let flagged = 0;
+  const nowIso = new Date().toISOString();
+  for (const rule of rules || []) {
+    if (await inMaintenance(rule.organization_id)) continue;
+    const { data: devices } = await admin.from("devices").select("id,hostname,agent_version")
+      .eq("organization_id", rule.organization_id).is("archived_at", null).eq("device_type", "workstation").eq("status", "online").limit(500);
+    const outdated = (devices || []).filter((d: any) => d.agent_version && d.agent_version !== LATEST_AGENT_VERSION);
+    const current = new Set(outdated.map((d: any) => d.id));
+    for (const device of outdated) {
+      const { data: active } = await admin.from("alert_events").select("id").eq("device_id", device.id).eq("rule_id", rule.id).in("status", ["open", "acknowledged"]).limit(1);
+      if (active?.length) continue;
+      const { error } = await admin.from("alert_events").insert({
+        organization_id: rule.organization_id, device_id: device.id, rule_id: rule.id, source: "agent_version",
+        severity: "info", title: `${rule.name}: ${device.hostname}`,
+        message: `Running agent ${device.agent_version}, latest is ${LATEST_AGENT_VERSION}.`,
+      });
+      if (!error) flagged += 1;
+    }
+    const { data: openAlerts } = await admin.from("alert_events").select("id,device_id").eq("rule_id", rule.id).in("status", ["open", "acknowledged"]);
+    for (const a of openAlerts || []) {
+      if (!current.has(a.device_id)) await admin.from("alert_events").update({ status: "resolved", resolved_at: nowIso }).eq("id", a.id);
+    }
+  }
+  return flagged;
+}
+
 async function runCheck(check: any): Promise<{ status: "up" | "down"; latency_ms: number | null; status_code: number | null; error: string | null }> {
   const started = performance.now();
+  const elapsed = () => Math.round(performance.now() - started);
   try {
-    if (check.check_type === "http") {
+    if (check.check_type === "http" || check.check_type === "keyword" || check.check_type === "json") {
       const url = new URL(check.target);
       await assertPublicHost(url.hostname);
       const res = await fetch(url.toString(), { method: "GET", redirect: "manual", signal: AbortSignal.timeout(check.timeout_ms), headers: { "User-Agent": "EliteMonitoring/1.0" } });
+      if (res.status >= 400) { await res.body?.cancel(); return { status: "down", latency_ms: elapsed(), status_code: res.status, error: `HTTP ${res.status}` }; }
+      if (check.check_type === "keyword") {
+        const body = (await res.text()).slice(0, 2_000_000);
+        const needle = String(check.match_text || "");
+        if (needle && !body.includes(needle)) return { status: "down", latency_ms: elapsed(), status_code: res.status, error: `Expected text not found: "${needle.slice(0, 60)}"` };
+        return { status: "up", latency_ms: elapsed(), status_code: res.status, error: null };
+      }
+      if (check.check_type === "json") {
+        let data: any;
+        try { data = JSON.parse((await res.text()).slice(0, 2_000_000)); } catch { return { status: "down", latency_ms: elapsed(), status_code: res.status, error: "Response was not valid JSON" }; }
+        const path = String(check.json_path || "").split(".").filter(Boolean);
+        let value: any = data;
+        for (const key of path) value = value == null ? undefined : value[key];
+        const expected = check.json_expected == null || check.json_expected === "" ? null : String(check.json_expected);
+        if (expected !== null && String(value) !== expected) return { status: "down", latency_ms: elapsed(), status_code: res.status, error: `${check.json_path || "value"} was "${value}", expected "${expected}"` };
+        if (expected === null && value === undefined) return { status: "down", latency_ms: elapsed(), status_code: res.status, error: `${check.json_path || "value"} was missing from the response` };
+        return { status: "up", latency_ms: elapsed(), status_code: res.status, error: null };
+      }
       await res.body?.cancel();
-      const latency = Math.round(performance.now() - started);
-      return res.status < 400 ? { status: "up", latency_ms: latency, status_code: res.status, error: null } : { status: "down", latency_ms: latency, status_code: res.status, error: `HTTP ${res.status}` };
+      return { status: "up", latency_ms: elapsed(), status_code: res.status, error: null };
     }
+    if (check.check_type === "ssl") {
+      const url = new URL(check.target);
+      await assertPublicHost(url.hostname);
+      const conn = await Promise.race([
+        Deno.connectTls({ hostname: url.hostname, port: url.port ? Number(url.port) : 443 }),
+        new Promise<never>((_, reject) => setTimeout(() => reject(new Error("Connection timed out")), check.timeout_ms)),
+      ]);
+      try {
+        const cert = conn.getPeerCertificate?.();
+        conn.close();
+        const notAfter = cert?.validTo ? new Date(cert.validTo) : null;
+        if (!notAfter || Number.isNaN(notAfter.getTime())) return { status: "up", latency_ms: elapsed(), status_code: null, error: null };
+        const daysLeft = Math.floor((notAfter.getTime() - Date.now()) / 86_400_000);
+        const warnDays = Number(check.ssl_warn_days) > 0 ? Number(check.ssl_warn_days) : 14;
+        if (daysLeft < 0) return { status: "down", latency_ms: elapsed(), status_code: null, error: "Certificate has expired" };
+        if (daysLeft <= warnDays) return { status: "down", latency_ms: elapsed(), status_code: null, error: `Certificate expires in ${daysLeft} day(s)` };
+        return { status: "up", latency_ms: elapsed(), status_code: null, error: null };
+      } catch { conn.close(); return { status: "up", latency_ms: elapsed(), status_code: null, error: null }; }
+    }
+    if (check.check_type === "dns") {
+      await assertPublicHost(check.target);
+      const [v4, v6] = await Promise.all([
+        Deno.resolveDns(check.target, "A").catch(() => [] as string[]),
+        Deno.resolveDns(check.target, "AAAA").catch(() => [] as string[]),
+      ]);
+      return v4.length || v6.length
+        ? { status: "up", latency_ms: elapsed(), status_code: null, error: null }
+        : { status: "down", latency_ms: elapsed(), status_code: null, error: "No DNS records found" };
+    }
+    if (check.check_type === "ping") {
+      // Edge functions cannot send raw ICMP packets, so this is a reachability check:
+      // can we open a TCP connection to the host at all (443, then 80 as a fallback).
+      await assertPublicHost(check.target);
+      for (const port of [443, 80]) {
+        try {
+          const conn = await Promise.race([
+            Deno.connect({ hostname: check.target, port }),
+            new Promise<never>((_, reject) => setTimeout(() => reject(new Error("timeout")), Math.min(check.timeout_ms, 4000))),
+          ]);
+          conn.close();
+          return { status: "up", latency_ms: elapsed(), status_code: null, error: null };
+        } catch { /* try the next port */ }
+      }
+      return { status: "down", latency_ms: null, status_code: null, error: "Host did not respond on 443 or 80" };
+    }
+    // tcp
     await assertPublicHost(check.target);
     const conn = await Promise.race([
       Deno.connect({ hostname: check.target, port: check.port }),
       new Promise<never>((_, reject) => setTimeout(() => reject(new Error("Connection timed out")), check.timeout_ms)),
     ]);
     conn.close();
-    return { status: "up", latency_ms: Math.round(performance.now() - started), status_code: null, error: null };
+    return { status: "up", latency_ms: elapsed(), status_code: null, error: null };
   } catch (error) {
     const message = error instanceof BlockedTarget ? error.message : String((error as Error)?.message || error).slice(0, 200);
     return { status: "down", latency_ms: null, status_code: null, error: message };
@@ -340,13 +484,24 @@ async function applyCheckResult(check: any, result: Awaited<ReturnType<typeof ru
   const changed = nextStatus !== check.status && nextStatus !== "unknown";
   await admin.from("uptime_checks").update({ consecutive_failures: failures, status: nextStatus, last_checked_at: now, ...(changed ? { last_status_change_at: now } : {}) }).eq("id", check.id);
   if (nextStatus === "down" && check.status !== "down" && !(await inMaintenance(check.organization_id))) {
-    const { data: active } = await admin.from("alert_events").select("id").eq("uptime_check_id", check.id).in("status", ["open", "acknowledged"]).limit(1);
+    const { data: active } = await admin.from("alert_events").select("id").eq("uptime_check_id", check.id).eq("source", "uptime").in("status", ["open", "acknowledged"]).limit(1);
     if (!active?.length) {
       await admin.from("alert_events").insert({ organization_id: check.organization_id, uptime_check_id: check.id, source: "uptime", severity: "critical", title: `${check.name} is down`, message: `${check.check_type.toUpperCase()} check on ${check.target}${check.port ? ":" + check.port : ""} failed: ${result.error ?? "no response"}.` });
     }
   }
   if (result.status === "up") {
-    await admin.from("alert_events").update({ status: "resolved", resolved_at: now }).eq("uptime_check_id", check.id).in("status", ["open", "acknowledged"]);
+    await admin.from("alert_events").update({ status: "resolved", resolved_at: now }).eq("uptime_check_id", check.id).eq("source", "uptime").in("status", ["open", "acknowledged"]);
+  }
+  // A separate, lighter alert for a check that's up but answering too slowly.
+  if (check.latency_alert_ms && result.status === "up" && result.latency_ms !== null && !(await inMaintenance(check.organization_id))) {
+    if (result.latency_ms > check.latency_alert_ms) {
+      const { data: active } = await admin.from("alert_events").select("id").eq("uptime_check_id", check.id).eq("source", "uptime_latency").in("status", ["open", "acknowledged"]).limit(1);
+      if (!active?.length) {
+        await admin.from("alert_events").insert({ organization_id: check.organization_id, uptime_check_id: check.id, source: "uptime_latency", severity: "warning", title: `${check.name} is slow`, message: `Responded in ${result.latency_ms}ms, above the ${check.latency_alert_ms}ms limit.` });
+      }
+    } else {
+      await admin.from("alert_events").update({ status: "resolved", resolved_at: now }).eq("uptime_check_id", check.id).eq("source", "uptime_latency").in("status", ["open", "acknowledged"]);
+    }
   }
 }
 async function runDueChecks(): Promise<number> {
@@ -368,7 +523,7 @@ async function handleTick(req: Request) {
   const step = async (name: string, fn: () => Promise<number>) => {
     try { stats[name] = await fn(); } catch (error) { errors.push(`${name}: ${String((error as Error)?.message || error).slice(0, 120)}`); await platformEvent("error", "tick", `${name} failed: ${String((error as Error)?.message || error)}`); }
   };
-  await Promise.all([step("offline_flagged", detectOfflineDevices), step("uptime_checked", runDueChecks)]);
+  await Promise.all([step("offline_flagged", detectOfflineDevices), step("uptime_checked", runDueChecks), step("interface_issues_flagged", detectInterfaceIssues), step("outdated_agents_flagged", detectOutdatedAgents)]);
   await step("notifications_sent", dispatchAlertNotifications);
   await step("reports_sent", sendWeeklyReports);
   const summary = { ...stats, errors, duration_ms: Date.now() - started, ok: errors.length === 0 };
@@ -484,8 +639,10 @@ async function handle(req: Request): Promise<Response> {
     // The device is reporting again: clear any open offline alert.
     await admin.from("alert_events").update({ status: "resolved", resolved_at: now }).eq("device_id", deviceId).eq("source", "offline").in("status", ["open", "acknowledged"]);
     const { data: rules } = await admin.from("alert_rules").select("id,name,metric,operator,threshold")
-      .eq("organization_id", device.organization_id).eq("enabled", true).in("metric", ["cpu_percent", "memory_percent", "disk_percent"]);
+      .eq("organization_id", device.organization_id).eq("enabled", true).in("metric", ["cpu_percent", "memory_percent", "disk_percent", "net_sent_bps", "net_recv_bps"]);
     let maintenance: boolean | null = null;
+    const isRate = (m: string) => m === "net_sent_bps" || m === "net_recv_bps";
+    const fmtRate = (n: number) => n >= 1_000_000_000 ? (n / 1_000_000_000).toFixed(1) + " Gbps" : n >= 1_000_000 ? (n / 1_000_000).toFixed(1) + " Mbps" : (n / 1000).toFixed(0) + " Kbps";
     for (const rule of rules || []) {
       const value = metrics[rule.metric as string] as number | null;
       if (value == null || rule.threshold == null) continue;
@@ -500,11 +657,14 @@ async function handle(req: Request): Promise<Response> {
       if (!active?.length) {
         if (maintenance === null) maintenance = await inMaintenance(device.organization_id);
         if (maintenance) continue;
+        const critical = isRate(rule.metric) ? value >= rule.threshold * 1.5 : value >= Math.min(100, rule.threshold + 15);
         await admin.from("alert_events").insert({
           organization_id: device.organization_id, device_id: deviceId, rule_id: rule.id, source: "metric",
-          severity: value >= Math.min(100, rule.threshold + 15) ? "critical" : "warning",
+          severity: critical ? "critical" : "warning",
           title: rule.name + ": " + device.hostname,
-          message: rule.metric + " reached " + value.toFixed(1) + "% (threshold " + rule.threshold + "%).",
+          message: isRate(rule.metric)
+            ? rule.metric + " reached " + fmtRate(value) + " (threshold " + fmtRate(rule.threshold) + ")."
+            : rule.metric + " reached " + value.toFixed(1) + "% (threshold " + rule.threshold + "%).",
         });
       }
     }
@@ -545,12 +705,15 @@ async function handle(req: Request): Promise<Response> {
       if (error) { await platformEvent("error", "logs", "Could not store device logs", device.organization_id); return fail("Could not store logs", 500); }
     }
     // Repeated failed sign-ins on one device become an alert; it clears once they stop.
+    // The threshold comes from an org's "failed_signins" rule when it has one enabled, else the old default of 5.
+    const { data: signinRule } = await admin.from("alert_rules").select("threshold").eq("organization_id", device.organization_id).eq("metric", "failed_signins").eq("enabled", true).maybeSingle();
+    const signinThreshold = Number(signinRule?.threshold) > 0 ? Number(signinRule!.threshold) : 5;
     const windowStart = new Date(nowMs - 10 * 60000).toISOString();
     const { count } = await admin.from("device_logs").select("id", { count: "exact", head: true }).eq("device_id", device.id).eq("level", "audit_failure").gte("logged_at", windowStart);
     const { data: openLogAlert } = await admin.from("alert_events").select("id,triggered_at").eq("device_id", device.id).eq("source", "log").in("status", ["open", "acknowledged"]).limit(1);
-    if ((count || 0) >= 5 && !openLogAlert?.length && !(await inMaintenance(device.organization_id))) {
+    if ((count || 0) >= signinThreshold && !openLogAlert?.length && !(await inMaintenance(device.organization_id))) {
       await admin.from("alert_events").insert({ organization_id: device.organization_id, device_id: device.id, source: "log", severity: "warning", title: `Repeated failed sign-ins: ${device.hostname}`, message: `${count} failed sign-in attempts in the last 10 minutes.` });
-    } else if ((count || 0) < 5 && openLogAlert?.length && Date.now() - new Date(openLogAlert[0].triggered_at).getTime() > 15 * 60000) {
+    } else if ((count || 0) < signinThreshold && openLogAlert?.length && Date.now() - new Date(openLogAlert[0].triggered_at).getTime() > 15 * 60000) {
       await admin.from("alert_events").update({ status: "resolved", resolved_at: new Date().toISOString() }).eq("id", openLogAlert[0].id);
     }
     return json({ ok: true, accepted: rows.length });

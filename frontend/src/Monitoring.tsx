@@ -53,6 +53,8 @@ export function LogsPage({ organizationId, devices }: { organizationId: string; 
 export function UptimePage({ organizationId, role, token, sites }: { organizationId: string; role: Role; token: string; sites: { id: string; name: string }[] }) {
   const [checks, setChecks] = useState<any[]>([]); const [spark, setSpark] = useState<Record<string, (number | null)[]>>({}); const [msg, setMsg] = useState(''); const [err, setErr] = useState('');
   const [name, setName] = useState(''), [type, setType] = useState('http'), [target, setTarget] = useState('https://'), [port, setPort] = useState('443'), [interval, setIntervalS] = useState('300'), [busy, setBusy] = useState('');
+  const [matchText, setMatchText] = useState(''), [jsonPath, setJsonPath] = useState(''), [jsonExpected, setJsonExpected] = useState(''), [sslWarnDays, setSslWarnDays] = useState('14'), [latencyMs, setLatencyMs] = useState('');
+  const urlTypes = ['http', 'keyword', 'json', 'ssl'];
   const load = useCallback(async () => {
     if (!supabase) return;
     const { data } = await supabase.from('uptime_checks').select('*').eq('organization_id', organizationId).order('name'); setChecks(data ?? []);
@@ -64,6 +66,10 @@ export function UptimePage({ organizationId, role, token, sites }: { organizatio
     e.preventDefault(); if (!supabase) return; setBusy('add'); setErr(''); setMsg('');
     const row: any = { organization_id: organizationId, name: name.trim(), check_type: type, target: target.trim(), interval_seconds: Number(interval), timeout_ms: 5000, site_id: sites[0]?.id ?? null };
     if (type === 'tcp') row.port = Number(port);
+    if (type === 'keyword') row.match_text = matchText.trim();
+    if (type === 'json') { row.json_path = jsonPath.trim(); row.json_expected = jsonExpected.trim(); }
+    if (type === 'ssl') row.ssl_warn_days = Number(sslWarnDays) || 14;
+    if (latencyMs.trim()) row.latency_alert_ms = Number(latencyMs);
     const { error } = await supabase.from('uptime_checks').insert(row); setBusy('');
     if (error) setErr(error.message); else { setMsg('Check created. First result arrives within a minute.'); setName(''); void load(); }
   };
@@ -74,10 +80,17 @@ export function UptimePage({ organizationId, role, token, sites }: { organizatio
     <Flash kind="success" msg={msg}/><Flash kind="error" msg={err}/>
     {isOp(role) && <form className="panel asset-form" onSubmit={add}><h3>Add uptime check</h3>
       <label>Name<input value={name} onChange={e => setName(e.target.value)} required maxLength={80} placeholder="Company website"/></label>
-      <label>Type<Select value={type} onChange={e => { setType(e.target.value); setTarget(e.target.value === 'http' ? 'https://' : ''); }}><option value="http">HTTP(S) page</option><option value="tcp">TCP port</option></Select></label>
-      <label className="span-2">{type === 'http' ? 'URL' : 'Host'}<input value={target} onChange={e => setTarget(e.target.value)} required placeholder={type === 'http' ? 'https://example.com' : 'mail.example.com'}/></label>
+      <label>Type<Select value={type} onChange={e => { setType(e.target.value); setTarget(urlTypes.includes(e.target.value) ? 'https://' : ''); }}>
+        <option value="http">HTTP(S) page</option><option value="keyword">Keyword on page</option><option value="json">JSON / API health</option>
+        <option value="ssl">SSL certificate</option><option value="tcp">TCP port</option><option value="ping">Ping (reachability)</option><option value="dns">DNS resolves</option>
+      </Select></label>
+      <label className="span-2">{urlTypes.includes(type) ? 'URL' : 'Host'}<input value={target} onChange={e => setTarget(e.target.value)} required placeholder={urlTypes.includes(type) ? 'https://example.com' : 'mail.example.com'}/></label>
       <label>Check every<Select value={interval} onChange={e => setIntervalS(e.target.value)}><option value="60">1 minute</option><option value="300">5 minutes</option><option value="900">15 minutes</option><option value="3600">1 hour</option></Select></label>
       {type === 'tcp' && <label>Port<input type="number" min="1" max="65535" value={port} onChange={e => setPort(e.target.value)} required/></label>}
+      {type === 'keyword' && <label className="span-2">Text that must appear on the page<input value={matchText} onChange={e => setMatchText(e.target.value)} required placeholder="e.g. Add to cart"/></label>}
+      {type === 'json' && <><label>JSON field (dot path)<input value={jsonPath} onChange={e => setJsonPath(e.target.value)} required placeholder="status"/></label><label>Expected value<input value={jsonExpected} onChange={e => setJsonExpected(e.target.value)} required placeholder="ok"/></label></>}
+      {type === 'ssl' && <label>Warn when expiring within (days)<input type="number" min="1" max="365" value={sslWarnDays} onChange={e => setSslWarnDays(e.target.value)}/></label>}
+      <label>Alert if slower than (ms, optional)<input type="number" min="50" max="60000" value={latencyMs} onChange={e => setLatencyMs(e.target.value)} placeholder="e.g. 2000"/></label>
       <div className="form-cta"><button className="primary-action" disabled={busy === 'add'}>{busy === 'add' ? 'Saving…' : 'Create check'}</button></div>
       <p className="muted form-note">Checks run from the cloud, so only public internet targets are allowed (private/local addresses are blocked). A check turns “down” after 2 failures in a row.</p></form>}
     <section className="panel page-panel"><div className="panel-head"><div><h3>Uptime checks</h3><p>Availability of websites and services, last 24 hours of latency.</p></div></div>
