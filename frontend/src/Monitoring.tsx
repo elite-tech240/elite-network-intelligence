@@ -2,7 +2,8 @@ import { FormEvent, useCallback, useEffect, useState } from 'react';
 import { supabase, api, fmtBps, fmtUptime, ago, LATEST_AGENT_VERSION, SELF_UPDATE_FROM, versionAtLeast, publishedAgentVersion, type Role } from './lib';
 import { Maximize2 } from 'lucide-react';
 import { LineChart, Sparkline, type Point } from './Chart';
-import { Flash, confirmDialog, Skeleton, Select, toast, LongText } from './ui';
+import { Flash, confirmDialog, Skeleton, Select, toast, LongText, Modal } from './ui';
+import { Plus } from 'lucide-react';
 
 type Dev = { id: string; hostname: string; agent_version?: string | null };
 const isOp = (r: Role) => ['owner', 'admin', 'operator'].includes(r);
@@ -52,6 +53,7 @@ export function LogsPage({ organizationId, devices }: { organizationId: string; 
 /* ---------------------------------------------------------------- Uptime */
 export function UptimePage({ organizationId, role, token, sites }: { organizationId: string; role: Role; token: string; sites: { id: string; name: string }[] }) {
   const [checks, setChecks] = useState<any[]>([]); const [spark, setSpark] = useState<Record<string, (number | null)[]>>({}); const [msg, setMsg] = useState(''); const [err, setErr] = useState('');
+  const [showAdd, setShowAdd] = useState(false);
   const [name, setName] = useState(''), [type, setType] = useState('http'), [target, setTarget] = useState('https://'), [port, setPort] = useState('443'), [interval, setIntervalS] = useState('300'), [busy, setBusy] = useState('');
   const [matchText, setMatchText] = useState(''), [jsonPath, setJsonPath] = useState(''), [jsonExpected, setJsonExpected] = useState(''), [sslWarnDays, setSslWarnDays] = useState('14'), [latencyMs, setLatencyMs] = useState('');
   const urlTypes = ['http', 'keyword', 'json', 'ssl'];
@@ -71,14 +73,22 @@ export function UptimePage({ organizationId, role, token, sites }: { organizatio
     if (type === 'ssl') row.ssl_warn_days = Number(sslWarnDays) || 14;
     if (latencyMs.trim()) row.latency_alert_ms = Number(latencyMs);
     const { error } = await supabase.from('uptime_checks').insert(row); setBusy('');
-    if (error) setErr(error.message); else { setMsg('Check created. First result arrives within a minute.'); setName(''); void load(); }
+    if (error) setErr(error.message); else { setMsg('Check created. First result arrives within a minute.'); setName(''); setShowAdd(false); void load(); }
   };
   const run = async (id: string) => { setBusy(id); setErr(''); try { const r = await api('/uptime-checks/run', token, { method: 'POST', body: { check_id: id } }); setMsg(r.status === 'up' ? `Up · ${r.latency_ms} ms` : `Down · ${r.error}`); void load(); } catch (e) { setErr((e as Error).message); } finally { setBusy(''); } };
   const toggle = async (c: any) => { await supabase?.from('uptime_checks').update({ enabled: !c.enabled }).eq('id', c.id); void load(); };
   const del = async (c: any) => { if (!await confirmDialog(`Delete check "${c.name}"?`)) return; await supabase?.from('uptime_checks').delete().eq('id', c.id); void load(); };
   return <div className="sites-workspace">
     <Flash kind="success" msg={msg}/><Flash kind="error" msg={err}/>
-    {isOp(role) && <form className="panel asset-form" onSubmit={add}><h3>Add uptime check</h3>
+    <section className="panel page-panel"><div className="panel-head"><div><h3>Uptime checks</h3><p>Availability of websites and services, last 24 hours of latency.</p></div>{isOp(role) && <button className="primary-action" onClick={() => setShowAdd(true)}><Plus size={15}/>Add check</button>}</div>
+      <div className="table-wrap"><table><thead><tr><th>CHECK</th><th>TARGET</th><th>STATUS</th><th>LATENCY (24H)</th><th>LAST RUN</th><th></th></tr></thead><tbody>
+        {checks.map(c => <tr key={c.id}><td><b>{c.name}</b>{!c.enabled && <span className="muted"> · paused</span>}</td><td>{c.check_type.toUpperCase()} {c.target}{c.port ? ':' + c.port : ''}</td>
+          <td><span className={`status-pill ${c.status === 'up' ? 'online' : c.status === 'down' ? 'offline' : 'pending'}`}><i/>{c.status}</span></td>
+          <td className="spark-cell"><Sparkline values={spark[c.id] ?? []}/></td><td>{ago(c.last_checked_at)}</td>
+          <td>{isOp(role) && <div className="row-actions"><button className="secondary-action" disabled={busy === c.id} onClick={() => run(c.id)}>Run now</button><button className="secondary-action" onClick={() => toggle(c)}>{c.enabled ? 'Pause' : 'Resume'}</button><button className="danger-action" onClick={() => del(c)}>Delete</button></div>}</td></tr>)}
+        {!checks.length && <Empty cols={6} text="No uptime checks yet. Add one to start monitoring a website or service."/>}
+      </tbody></table></div></section>
+    {showAdd && <Modal title="Add uptime check" onClose={() => setShowAdd(false)}><form className="asset-form" onSubmit={add}>
       <label>Name<input value={name} onChange={e => setName(e.target.value)} required maxLength={80} placeholder="Company website"/></label>
       <label>Type<Select value={type} onChange={e => { setType(e.target.value); setTarget(urlTypes.includes(e.target.value) ? 'https://' : ''); }}>
         <option value="http">HTTP(S) page</option><option value="keyword">Keyword on page</option><option value="json">JSON / API health</option>
@@ -91,16 +101,9 @@ export function UptimePage({ organizationId, role, token, sites }: { organizatio
       {type === 'json' && <><label>JSON field (dot path)<input value={jsonPath} onChange={e => setJsonPath(e.target.value)} required placeholder="status"/></label><label>Expected value<input value={jsonExpected} onChange={e => setJsonExpected(e.target.value)} required placeholder="ok"/></label></>}
       {type === 'ssl' && <label>Warn when expiring within (days)<input type="number" min="1" max="365" value={sslWarnDays} onChange={e => setSslWarnDays(e.target.value)}/></label>}
       <label>Alert if slower than (ms, optional)<input type="number" min="50" max="60000" value={latencyMs} onChange={e => setLatencyMs(e.target.value)} placeholder="e.g. 2000"/></label>
-      <div className="form-cta"><button className="primary-action" disabled={busy === 'add'}>{busy === 'add' ? 'Saving…' : 'Create check'}</button></div>
-      <p className="muted form-note">Checks run from the cloud, so only public internet targets are allowed (private/local addresses are blocked). A check turns “down” after 2 failures in a row.</p></form>}
-    <section className="panel page-panel"><div className="panel-head"><div><h3>Uptime checks</h3><p>Availability of websites and services, last 24 hours of latency.</p></div></div>
-      <div className="table-wrap"><table><thead><tr><th>CHECK</th><th>TARGET</th><th>STATUS</th><th>LATENCY (24H)</th><th>LAST RUN</th><th></th></tr></thead><tbody>
-        {checks.map(c => <tr key={c.id}><td><b>{c.name}</b>{!c.enabled && <span className="muted"> · paused</span>}</td><td>{c.check_type.toUpperCase()} {c.target}{c.port ? ':' + c.port : ''}</td>
-          <td><span className={`status-pill ${c.status === 'up' ? 'online' : c.status === 'down' ? 'offline' : 'pending'}`}><i/>{c.status}</span></td>
-          <td className="spark-cell"><Sparkline values={spark[c.id] ?? []}/></td><td>{ago(c.last_checked_at)}</td>
-          <td>{isOp(role) && <div className="row-actions"><button className="secondary-action" disabled={busy === c.id} onClick={() => run(c.id)}>Run now</button><button className="secondary-action" onClick={() => toggle(c)}>{c.enabled ? 'Pause' : 'Resume'}</button><button className="danger-action" onClick={() => del(c)}>Delete</button></div>}</td></tr>)}
-        {!checks.length && <Empty cols={6} text="No uptime checks yet. Add your website or a service above."/>}
-      </tbody></table></div></section></div>;
+      <p className="muted form-note span-2">Checks run from the cloud, so only public internet targets are allowed (private/local addresses are blocked). A check turns “down” after 2 failures in a row.</p>
+      <div className="modal-actions span-2"><button type="button" className="secondary-action" onClick={() => setShowAdd(false)}>Cancel</button><button className="primary-action" disabled={busy === 'add'}>{busy === 'add' ? 'Saving…' : 'Create check'}</button></div>
+    </form></Modal>}</div>;
 }
 
 /* --------------------------------------------------------------- Reports */
@@ -157,38 +160,48 @@ export function PlatformPage({ organizationId, token }: { organizationId: string
 /* ------------------------------------------- Notification channels + maintenance (Settings tabs) */
 export function ChannelsPanel({ organizationId, role, token }: { organizationId: string; role: Role; token: string }) {
   const [rows, setRows] = useState<any[]>([]); const [deliveries, setDeliveries] = useState<any[]>([]); const [name, setName] = useState(''), [type, setType] = useState('email'), [dest, setDest] = useState(''), [sev, setSev] = useState('warning'), [msg, setMsg] = useState(''), [err, setErr] = useState(''), [busy, setBusy] = useState('');
+  const [showAdd, setShowAdd] = useState(false);
   const load = useCallback(async () => { if (!supabase) return; const [a, b] = await Promise.all([supabase.from('notification_channels').select('id,name,channel_type,config,min_severity,enabled').eq('organization_id', organizationId).order('created_at'), supabase.from('notification_deliveries').select('id,channel_id,kind,status,detail,created_at').eq('organization_id', organizationId).order('created_at', { ascending: false }).limit(15)]); setRows(a.data ?? []); setDeliveries(b.data ?? []); }, [organizationId]);
   useTick(() => void load(), 30000, [load]);
   if (!isAdmin(role)) return <section className="panel settings-card"><p className="muted">Only owners and admins can manage notification channels.</p></section>;
-  const add = async (e: FormEvent) => { e.preventDefault(); if (!supabase) return; setErr(''); setMsg(''); const config = type === 'email' ? { to: dest.trim() } : type === 'telegram' ? { chat_id: dest.trim() } : { url: dest.trim() }; const { error } = await supabase.from('notification_channels').insert({ organization_id: organizationId, name: name.trim(), channel_type: type, config, min_severity: sev, enabled: true }); if (error) setErr(error.message); else { setName(''); setDest(''); setMsg('Channel added. Press “Send test” to confirm it works.'); void load(); } };
+  const add = async (e: FormEvent) => { e.preventDefault(); if (!supabase) return; setErr(''); setMsg(''); const config = type === 'email' ? { to: dest.trim() } : type === 'telegram' ? { chat_id: dest.trim() } : { url: dest.trim() }; const { error } = await supabase.from('notification_channels').insert({ organization_id: organizationId, name: name.trim(), channel_type: type, config, min_severity: sev, enabled: true }); if (error) setErr(error.message); else { setName(''); setDest(''); setMsg('Channel added. Press “Send test” to confirm it works.'); setShowAdd(false); void load(); } };
   const test = async (id: string) => { setBusy(id); setErr(''); setMsg(''); try { const r = await api('/notification-channels/test', token, { method: 'POST', body: { channel_id: id } }); setMsg(r.ok ? 'Test notification sent.' : 'Not sent: ' + r.detail); } catch (e) { setErr((e as Error).message); } finally { setBusy(''); void load(); } };
   const del = async (id: string) => { if (await confirmDialog('Delete this channel?')) { await supabase?.from('notification_channels').delete().eq('id', id); void load(); } };
   const flip = async (c: any) => { await supabase?.from('notification_channels').update({ enabled: !c.enabled }).eq('id', c.id); void load(); };
   const shown = (c: any) => c.channel_type === 'email' ? c.config?.to : c.channel_type === 'telegram' ? 'chat ' + c.config?.chat_id : (() => { try { return new URL(c.config?.url).host; } catch { return 'webhook'; } })();
   return <div className="sites-workspace"><Flash kind="success" msg={msg}/><Flash kind="error" msg={err}/>
-    <form className="panel asset-form" onSubmit={add}><h3>Add notification channel</h3>
+    <section className="panel page-panel"><div className="panel-head"><div><h3>Notification channels</h3><p>Where alerts get sent.</p></div><button className="primary-action" onClick={() => setShowAdd(true)}><Plus size={15}/>Add channel</button></div>
+      <div className="table-wrap"><table><thead><tr><th>CHANNEL</th><th>TYPE</th><th>DESTINATION</th><th>MIN. SEVERITY</th><th></th></tr></thead><tbody>
+      {rows.map(c => <tr key={c.id}><td><b>{c.name}</b>{!c.enabled && <span className="muted"> · off</span>}</td><td>{c.channel_type}</td><td>{shown(c)}</td><td>{c.min_severity}</td><td><div className="row-actions"><button className="secondary-action" disabled={busy === c.id} onClick={() => test(c.id)}>Send test</button><button className="secondary-action" onClick={() => flip(c)}>{c.enabled ? 'Turn off' : 'Turn on'}</button><button className="danger-action" onClick={() => del(c.id)}>Delete</button></div></td></tr>)}
+      {!rows.length && <Empty cols={5} text="No channels yet. Without one, alerts only appear in the dashboard."/>}</tbody></table></div></section>
+    <section className="panel page-panel"><div className="panel-head"><div><h3>Recent deliveries</h3></div></div><div className="table-wrap"><table><tbody>{deliveries.map(d => <tr key={d.id}><td>{new Date(d.created_at).toLocaleString()}</td><td>{d.kind}</td><td><span className={`status-pill ${d.status === 'sent' ? 'online' : d.status === 'failed' ? 'offline' : 'pending'}`}><i/>{d.status}</span></td><td className="wrap-cell muted"><LongText text={d.detail}/></td></tr>)}{!deliveries.length && <Empty cols={4} text="Nothing sent yet."/>}</tbody></table></div></section>
+    {showAdd && <Modal title="Add notification channel" onClose={() => setShowAdd(false)}><form className="asset-form" onSubmit={add}>
       <label>Name<input value={name} onChange={e => setName(e.target.value)} required maxLength={60} placeholder="IT team"/></label>
       <label>Type<Select value={type} onChange={e => { setType(e.target.value); setDest(''); }}><option value="email">Email</option><option value="telegram">Telegram</option><option value="webhook">Webhook (Slack, Teams, etc.)</option></Select></label>
       <label>{type === 'email' ? 'Email address' : type === 'telegram' ? 'Telegram chat ID' : 'HTTPS webhook URL'}<input value={dest} onChange={e => setDest(e.target.value)} required placeholder={type === 'email' ? 'it@company.com' : type === 'telegram' ? '123456789' : 'https://hooks.example.com/…'}/></label>
       <label>Send alerts from<Select value={sev} onChange={e => setSev(e.target.value)}><option value="info">Everything</option><option value="warning">Warning and above</option><option value="critical">Critical only</option></Select></label>
-      <div className="form-actions"><button className="primary-action">Add channel</button></div>
-      <p className="muted form-note">Email needs RESEND_API_KEY and Telegram needs TELEGRAM_BOT_TOKEN set on the server; until then sends show as “skipped”. Weekly reports go to email channels on Mondays.</p></form>
-    <section className="panel page-panel"><div className="table-wrap"><table><thead><tr><th>CHANNEL</th><th>TYPE</th><th>DESTINATION</th><th>MIN. SEVERITY</th><th></th></tr></thead><tbody>
-      {rows.map(c => <tr key={c.id}><td><b>{c.name}</b>{!c.enabled && <span className="muted"> · off</span>}</td><td>{c.channel_type}</td><td>{shown(c)}</td><td>{c.min_severity}</td><td><div className="row-actions"><button className="secondary-action" disabled={busy === c.id} onClick={() => test(c.id)}>Send test</button><button className="secondary-action" onClick={() => flip(c)}>{c.enabled ? 'Turn off' : 'Turn on'}</button><button className="danger-action" onClick={() => del(c.id)}>Delete</button></div></td></tr>)}
-      {!rows.length && <Empty cols={5} text="No channels yet. Without one, alerts only appear in the dashboard."/>}</tbody></table></div></section>
-    <section className="panel page-panel"><div className="panel-head"><div><h3>Recent deliveries</h3></div></div><div className="table-wrap"><table><tbody>{deliveries.map(d => <tr key={d.id}><td>{new Date(d.created_at).toLocaleString()}</td><td>{d.kind}</td><td><span className={`status-pill ${d.status === 'sent' ? 'online' : d.status === 'failed' ? 'offline' : 'pending'}`}><i/>{d.status}</span></td><td className="wrap-cell muted"><LongText text={d.detail}/></td></tr>)}{!deliveries.length && <Empty cols={4} text="Nothing sent yet."/>}</tbody></table></div></section></div>;
+      <p className="muted form-note span-2">Email needs RESEND_API_KEY and Telegram needs TELEGRAM_BOT_TOKEN set on the server; until then sends show as “skipped”. Weekly reports go to email channels on Mondays.</p>
+      <div className="modal-actions span-2"><button type="button" className="secondary-action" onClick={() => setShowAdd(false)}>Cancel</button><button className="primary-action">Add channel</button></div>
+    </form></Modal>}</div>;
 }
 
 export function MaintenancePanel({ organizationId, role }: { organizationId: string; role: Role }) {
   const [rows, setRows] = useState<any[]>([]); const [name, setName] = useState('Planned maintenance'); const [mins, setMins] = useState('60'); const [err, setErr] = useState('');
+  const [showAdd, setShowAdd] = useState(false);
   const load = useCallback(async () => { const { data } = await (supabase?.from('maintenance_windows').select('id,name,starts_at,ends_at').eq('organization_id', organizationId).order('starts_at', { ascending: false }).limit(20) ?? Promise.resolve({ data: [] })); setRows(data ?? []); }, [organizationId]);
   useTick(() => void load(), 30000, [load]);
-  const start = async (e: FormEvent) => { e.preventDefault(); if (!supabase) return; setErr(''); const now = Date.now(); const { error } = await supabase.from('maintenance_windows').insert({ organization_id: organizationId, name: name.trim(), starts_at: new Date(now - 1000).toISOString(), ends_at: new Date(now + Number(mins) * 60000).toISOString() }); if (error) setErr(error.message); else void load(); };
+  const start = async (e: FormEvent) => { e.preventDefault(); if (!supabase) return; setErr(''); const now = Date.now(); const { error } = await supabase.from('maintenance_windows').insert({ organization_id: organizationId, name: name.trim(), starts_at: new Date(now - 1000).toISOString(), ends_at: new Date(now + Number(mins) * 60000).toISOString() }); if (error) setErr(error.message); else { setShowAdd(false); void load(); } };
   const end = async (id: string) => { await supabase?.from('maintenance_windows').update({ ends_at: new Date().toISOString() }).eq('id', id); void load(); };
   const active = (w: any) => new Date(w.starts_at).getTime() <= Date.now() && new Date(w.ends_at).getTime() >= Date.now();
   return <div className="sites-workspace"><Flash kind="error" msg={err}/>
-    {isOp(role) && <form className="panel asset-form" onSubmit={start}><h3>Start a maintenance window</h3><label>Reason<input value={name} onChange={e => setName(e.target.value)} required maxLength={80}/></label><label>For<Select value={mins} onChange={e => setMins(e.target.value)}><option value="30">30 minutes</option><option value="60">1 hour</option><option value="240">4 hours</option><option value="720">12 hours</option></Select></label><div className="form-actions"><button className="primary-action">Start now</button></div><p className="muted form-note">While a window is active, new alerts and notifications are paused so planned work does not page anyone.</p></form>}
-    <section className="panel page-panel"><div className="table-wrap"><table><thead><tr><th>WINDOW</th><th>FROM</th><th>UNTIL</th><th></th></tr></thead><tbody>{rows.map(w => <tr key={w.id}><td><b>{w.name}</b> {active(w) && <span className="status-pill pending"><i/>active</span>}</td><td>{new Date(w.starts_at).toLocaleString()}</td><td>{new Date(w.ends_at).toLocaleString()}</td><td>{isOp(role) && active(w) && <button className="secondary-action" onClick={() => end(w.id)}>End now</button>}</td></tr>)}{!rows.length && <Empty cols={4} text="No maintenance windows."/>}</tbody></table></div></section></div>;
+    <section className="panel page-panel"><div className="panel-head"><div><h3>Maintenance windows</h3><p>Pause alerts and notifications during planned work.</p></div>{isOp(role) && <button className="primary-action" onClick={() => setShowAdd(true)}><Plus size={15}/>Start window</button>}</div>
+      <div className="table-wrap"><table><thead><tr><th>WINDOW</th><th>FROM</th><th>UNTIL</th><th></th></tr></thead><tbody>{rows.map(w => <tr key={w.id}><td><b>{w.name}</b> {active(w) && <span className="status-pill pending"><i/>active</span>}</td><td>{new Date(w.starts_at).toLocaleString()}</td><td>{new Date(w.ends_at).toLocaleString()}</td><td>{isOp(role) && active(w) && <button className="secondary-action" onClick={() => end(w.id)}>End now</button>}</td></tr>)}{!rows.length && <Empty cols={4} text="No maintenance windows."/>}</tbody></table></div></section>
+    {showAdd && <Modal title="Start a maintenance window" onClose={() => setShowAdd(false)}><form className="asset-form" onSubmit={start}>
+      <label>Reason<input value={name} onChange={e => setName(e.target.value)} required maxLength={80}/></label>
+      <label>For<Select value={mins} onChange={e => setMins(e.target.value)}><option value="30">30 minutes</option><option value="60">1 hour</option><option value="240">4 hours</option><option value="720">12 hours</option></Select></label>
+      <p className="muted form-note span-2">While a window is active, new alerts and notifications are paused so planned work does not page anyone.</p>
+      <div className="modal-actions span-2"><button type="button" className="secondary-action" onClick={() => setShowAdd(false)}>Cancel</button><button className="primary-action">Start now</button></div>
+    </form></Modal>}</div>;
 }
 
 /* ------------------------------------------------- Discovery (Devices tab) */

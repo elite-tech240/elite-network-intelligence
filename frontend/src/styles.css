@@ -322,6 +322,11 @@ td{font-size:13px}th{font-size:12px}.muted{font-size:12px}.panel-head p,.page-he
 .permission-row input{margin-top:3px;width:16px;height:16px;accent-color:#398ce9;flex-shrink:0}
 .permission-row b{display:block;font-size:13px;color:#e2eaf6}
 .permission-row small{display:block;font-size:12px;color:#8495ad;margin-top:2px;line-height:1.5}
+.settings-divider{height:1px;background:#363637;margin:22px 0 18px}
+.settings-card .panel-head{padding:0 0 14px}
+.settings-card .panel-head h4{font:600 12px 'Space Grotesk';margin:0;color:#e2eaf6}
+.settings-card .panel-head p{font-size:12px;color:#8495ad;margin:5px 0 0}
+.settings-card .panel-head .primary-action,.settings-card .panel-head .secondary-action{margin-top:0;flex-shrink:0}
 .skeleton{display:grid;gap:10px;padding:14px 4px}.skeleton i{display:block;height:13px;border-radius:6px;background:linear-gradient(90deg,#2e2e2f 25%,#3e3e3f 50%,#2e2e2f 75%);background-size:200% 100%;animation:skel 1.4s infinite}
 @keyframes skel{to{background-position:-200% 0}}
 .empty-state{display:grid;justify-items:center;gap:8px;padding:34px 16px;text-align:center;color:#b4c3d7}.empty-state b{color:#e8edf7;font-size:16px}.empty-state p{margin:0;max-width:380px;font-size:14px}

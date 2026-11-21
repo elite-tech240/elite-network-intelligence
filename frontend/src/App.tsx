@@ -438,11 +438,9 @@ function SettingsPage({initialTab,user,membership,accessToken,onSignOut,orgName,
   {isOwner&&<section className="panel settings-card danger-card"><div className="settings-icon danger"><Trash2 size={19}/></div><h3>Delete this workspace</h3><p>Removes {orgName} with every site, network, device, metric, alert and member in it. This cannot be undone.</p><button className="danger-action" onClick={onDeleteWorkspace}><Trash2 size={15}/>Delete workspace</button></section>}</>}
  {tab==='notify'&&<ChannelsPanel organizationId={membership.organization_id} role={membership.role} token={accessToken}/>}
  {tab==='maint'&&<MaintenancePanel organizationId={membership.organization_id} role={membership.role}/>}
- {tab==='team'&&<><TeamInvite organizationId={membership.organization_id} role={membership.role} accessToken={accessToken}/><TeamMembers organizationId={membership.organization_id} role={membership.role} accessToken={accessToken} currentUserId={user.id}/><RolesManager organizationId={membership.organization_id} role={membership.role} accessToken={accessToken}/></>}
+ {tab==='team'&&<TeamManagement organizationId={membership.organization_id} role={membership.role} accessToken={accessToken} currentUserId={user.id}/>}
  </div>;
 }
-function TeamInvite({organizationId,role,accessToken}:{organizationId:string;role:Membership['role'];accessToken:string}) { const [email,setEmail]=useState(''),[inviteRole,setInviteRole]=useState('viewer'),[busy,setBusy]=useState(false),[message,setMessage]=useState(''),[error,setError]=useState('');if(!['owner','admin'].includes(role))return null;const invite=async(e:FormEvent)=>{e.preventDefault();if(!apiUrl){setError('VITE_API_URL is not configured.');return;}setBusy(true);setError('');setMessage('');try{const response=await fetch(apiUrl+'/team/invite',{method:'POST',headers:{'Content-Type':'application/json',Authorization:'Bearer '+accessToken},body:JSON.stringify({organization_id:organizationId,email:email.trim(),role:inviteRole})});const body=await response.json();if(!response.ok)throw new Error(body.detail||'Invite failed');setMessage('Invitation sent to '+body.email);setEmail('');}catch(e){setError(e instanceof Error?e.message:'Invitation failed.');}finally{setBusy(false);}};return <section className="panel settings-card"><div className="settings-icon"><UserRound size={19}/></div><h3>Invite a teammate</h3><p>Invite a teammate by email. Supabase Auth sends the invitation link; the selected role is assigned to this workspace.</p><form className="asset-form" onSubmit={invite}><label>Team member email<input type="email" value={email} onChange={e=>setEmail(e.target.value)} placeholder="colleague@company.com" required/></label><label>Workspace role<Select value={inviteRole} onChange={e=>setInviteRole(e.target.value)}><option value="viewer">Viewer</option><option value="operator">Operator</option>{role==='owner'&&<option value="admin">Admin</option>}</Select></label><Flash kind="error" msg={error}/><Flash kind="success" msg={message}/><button className="primary-action" disabled={busy}>{busy?'Sending…':'Send invitation'}</button></form></section>; }
-
 type TeamMember = { user_id: string; email: string; role: Membership['role']; created_at: string; custom_role_id?: string | null; custom_role_name?: string | null };
 const ROLE_OPTIONS: { value: string; label: string; desc: string }[] = [
   { value: 'viewer', label: 'Viewer', desc: 'Can view dashboards, devices and alerts.' },
@@ -462,22 +460,36 @@ const PERMISSION_RESOURCES: { value: string; label: string }[] = [
 ];
 type RolePermission = { resource: string; can_view: boolean; can_create: boolean; can_edit: boolean; can_delete: boolean };
 type CustomRole = { id: string; name: string; created_at: string; permissions: RolePermission[] };
-function TeamMembers({organizationId,role,accessToken,currentUserId}:{organizationId:string;role:Membership['role'];accessToken:string;currentUserId:string}) {
-  const [members,setMembers]=useState<TeamMember[]>([]); const [loading,setLoading]=useState(true); const [error,setError]=useState('');
+function emptyPermissions(): RolePermission[] {
+  return PERMISSION_RESOURCES.map(r => ({ resource: r.value, can_view: false, can_create: false, can_edit: false, can_delete: false }));
+}
+// Members and custom roles live together here: a role picked for a member (built-in or
+// custom) always comes from the same list this section keeps, so "what access am I giving
+// them" is answered by the role list right here, not a separate screen.
+function TeamManagement({organizationId,role,accessToken,currentUserId}:{organizationId:string;role:Membership['role'];accessToken:string;currentUserId:string}) {
+  const [members,setMembers]=useState<TeamMember[]>([]); const [roles,setRoles]=useState<CustomRole[]>([]);
+  const [loading,setLoading]=useState(true); const [error,setError]=useState('');
   const [busyId,setBusyId]=useState('');
-  const [editing,setEditing]=useState<TeamMember|null>(null);
+  const [editingMember,setEditingMember]=useState<TeamMember|null>(null);
+  const [editingRole,setEditingRole]=useState<CustomRole|'new'|null>(null);
+  const [inviting,setInviting]=useState(false);
   if (!['owner','admin'].includes(role)) return null;
   const load = useCallback(async () => {
     setLoading(true); setError('');
-    try { const data = await api<{members:TeamMember[]}>('/team/members?organization_id='+organizationId, accessToken); setMembers(data.members); }
-    catch (e) { setError(e instanceof Error ? e.message : 'Could not load members.'); }
+    try {
+      const [m, r] = await Promise.all([
+        api<{members:TeamMember[]}>('/team/members?organization_id='+organizationId, accessToken),
+        api<{roles:CustomRole[]}>('/team/roles?organization_id='+organizationId, accessToken),
+      ]);
+      setMembers(m.members); setRoles(r.roles);
+    } catch (e) { setError(e instanceof Error ? e.message : 'Could not load the team.'); }
     finally { setLoading(false); }
   }, [organizationId, accessToken]);
   useEffect(() => { void load(); }, [load]);
   const changeRole = async (m: TeamMember, newRole: string) => {
-    if (newRole === m.role || newRole === m.custom_role_id) { setEditing(null); return; }
+    if (newRole === m.role || newRole === m.custom_role_id) { setEditingMember(null); return; }
     setBusyId(m.user_id); setError('');
-    try { await api('/team/members/role', accessToken, { method: 'POST', body: { organization_id: organizationId, user_id: m.user_id, role: newRole } }); toast('Role updated'); setEditing(null); await load(); }
+    try { await api('/team/members/role', accessToken, { method: 'POST', body: { organization_id: organizationId, user_id: m.user_id, role: newRole } }); toast('Role updated'); setEditingMember(null); await load(); }
     catch (e) { setError(e instanceof Error ? e.message : 'Could not change that role.'); }
     finally { setBusyId(''); }
   };
@@ -489,26 +501,88 @@ function TeamMembers({organizationId,role,accessToken,currentUserId}:{organizati
     catch (e) { setError(e instanceof Error ? e.message : 'Could not remove that member.'); }
     finally { setBusyId(''); }
   };
+  const inviteDone = async () => { setInviting(false); await load(); };
+  const saveRole = async (name: string, permissions: RolePermission[], roleId?: string) => {
+    setBusyId(roleId || 'new'); setError('');
+    try {
+      if (roleId) await api(`/team/roles/${roleId}`, accessToken, { method: 'PUT', body: { organization_id: organizationId, name, permissions } });
+      else await api('/team/roles', accessToken, { method: 'POST', body: { organization_id: organizationId, name, permissions } });
+      toast(roleId ? 'Role updated' : 'Role created'); setEditingRole(null); await load();
+    } catch (e) { setError(e instanceof Error ? e.message : 'Could not save that role.'); }
+    finally { setBusyId(''); }
+  };
+  const removeRole = async (r: CustomRole) => {
+    const ok = await confirmDialog(`Delete the "${r.name}" role?`, { confirmText: 'Delete', danger: true });
+    if (!ok) return;
+    setBusyId(r.id); setError('');
+    try { await api(`/team/roles/${r.id}?organization_id=${organizationId}`, accessToken, { method: 'DELETE' }); toast('Role deleted'); await load(); }
+    catch (e) { setError(e instanceof Error ? e.message : 'Could not delete that role.'); }
+    finally { setBusyId(''); }
+  };
   return <section className="panel settings-card">
-    <div className="settings-icon"><UserRound size={19}/></div><h3>Members</h3><p>Everyone with access to this workspace. Change a role or remove someone below.</p>
+    <div className="panel-head"><div><div className="settings-icon"><UserRound size={19}/></div><h3>Team</h3><p>Everyone with access to this workspace, and the roles that decide what they can do.</p></div>
+      <button className="primary-action" onClick={()=>setInviting(true)}><Plus size={15}/>Invite member</button></div>
     <Flash kind="error" msg={error}/>
-    {loading ? <Skeleton rows={3}/> : !members.length ? <EmptyState icon={<UserRound size={22}/>} title="No members yet" text="Invite someone above to get started."/> : <div className="table-wrap"><table>
+    {loading ? <Skeleton rows={3}/> : !members.length ? <EmptyState icon={<UserRound size={22}/>} title="No members yet" text="Invite someone to get started."/> : <div className="table-wrap"><table>
       <thead><tr><th>EMAIL</th><th>ROLE</th><th>ACTIONS</th></tr></thead>
       <tbody>{members.map(m => { const self = m.user_id === currentUserId; const canEditThis = role === 'owner' || !['owner','admin'].includes(m.role); return (
         <tr key={m.user_id}>
           <td>{m.email}{self ? ' (you)' : ''}</td>
           <td><span className={m.role==='owner'?'role-badge owner':'role-badge'}>{m.role==='custom'?(m.custom_role_name||'Custom'):m.role}</span></td>
-          <td>{!self && canEditThis && <div className="row-actions"><button className="mini-icon" title="Edit permissions" disabled={busyId===m.user_id} onClick={()=>setEditing(m)}><Pencil size={15}/></button><button className="mini-icon danger" title="Remove member" disabled={busyId===m.user_id} onClick={()=>removeMember(m)}><Trash2 size={15}/></button></div>}</td>
+          <td>{!self && canEditThis && <div className="row-actions"><button className="mini-icon" title="Edit permissions" disabled={busyId===m.user_id} onClick={()=>setEditingMember(m)}><Pencil size={15}/></button><button className="mini-icon danger" title="Remove member" disabled={busyId===m.user_id} onClick={()=>removeMember(m)}><Trash2 size={15}/></button></div>}</td>
         </tr>
       ); })}</tbody>
     </table></div>}
-    {editing && <PermissionsModal member={editing} canGrantAdmin={role==='owner'} busy={busyId===editing.user_id} organizationId={organizationId} accessToken={accessToken} onSave={(newRole)=>changeRole(editing, newRole)} onClose={()=>setEditing(null)}/>}
+
+    <div className="settings-divider"/>
+    <div className="panel-head"><div><h4>Custom roles</h4><p>Build a role with its own granular permissions per resource, beyond the built-in Viewer/Operator/Admin roles.</p></div>
+      <button className="secondary-action" onClick={()=>setEditingRole('new')}><Plus size={15}/>Create role</button></div>
+    {!loading && !roles.length ? <p className="muted">No custom roles yet. Create one to assign fine-grained permissions to a teammate.</p> : <div className="table-wrap"><table>
+      <thead><tr><th>ROLE</th><th>ACTIONS</th></tr></thead>
+      <tbody>{roles.map(r => (
+        <tr key={r.id}>
+          <td>{r.name}</td>
+          <td><div className="row-actions"><button className="secondary-action sm" disabled={busyId===r.id} onClick={()=>setEditingRole(r)}><Pencil size={14}/>Edit</button><button className="danger-action sm" disabled={busyId===r.id} onClick={()=>removeRole(r)}><Trash2 size={14}/>Delete</button></div></td>
+        </tr>
+      ))}</tbody>
+    </table></div>}
+
+    {inviting && <InviteModal organizationId={organizationId} accessToken={accessToken} canGrantAdmin={role==='owner'} customRoles={roles} onDone={inviteDone} onClose={()=>setInviting(false)}/>}
+    {editingMember && <PermissionsModal member={editingMember} canGrantAdmin={role==='owner'} busy={busyId===editingMember.user_id} customRoles={roles} onSave={(newRole)=>changeRole(editingMember, newRole)} onClose={()=>setEditingMember(null)}/>}
+    {editingRole && <CustomRoleModal role={editingRole==='new'?null:editingRole} busy={!!busyId} onSave={(name,perms)=>saveRole(name, perms, editingRole==='new'?undefined:editingRole.id)} onClose={()=>setEditingRole(null)}/>}
   </section>;
 }
-function PermissionsModal({member,canGrantAdmin,busy,organizationId,accessToken,onSave,onClose}:{member:TeamMember;canGrantAdmin:boolean;busy:boolean;organizationId:string;accessToken:string;onSave:(role:string)=>void;onClose:()=>void}) {
+function InviteModal({organizationId,accessToken,canGrantAdmin,customRoles,onDone,onClose}:{organizationId:string;accessToken:string;canGrantAdmin:boolean;customRoles:CustomRole[];onDone:()=>void;onClose:()=>void}) {
+  const [email,setEmail]=useState(''); const [picked,setPicked]=useState('viewer'); const [busy,setBusy]=useState(false); const [error,setError]=useState('');
+  const options = ROLE_OPTIONS.filter(o => o.value !== 'admin' || canGrantAdmin);
+  const invite = async (e: FormEvent) => {
+    e.preventDefault(); setBusy(true); setError('');
+    try { const r = await api<{email:string}>('/team/invite', accessToken, { method: 'POST', body: { organization_id: organizationId, email: email.trim(), role: picked } }); toast('Invitation sent to '+r.email); onDone(); }
+    catch (e) { setError(e instanceof Error ? e.message : 'Invitation failed.'); }
+    finally { setBusy(false); }
+  };
+  return <Modal title="Invite member" subtitle="Choose the access they'll have" icon={<UserRound size={17}/>} onClose={onClose}>
+    <form onSubmit={invite}>
+      <label>Email<input type="email" value={email} onChange={e=>setEmail(e.target.value)} placeholder="colleague@company.com" required/></label>
+      <div className="permission-list" style={{marginTop:14}}>{options.map(o => (
+        <label key={o.value} className="permission-row">
+          <input type="checkbox" checked={picked===o.value} onChange={()=>setPicked(o.value)}/>
+          <span><b>{o.label}</b><small>{o.desc}</small></span>
+        </label>
+      ))}
+      {customRoles.map(cr => (
+        <label key={cr.id} className="permission-row">
+          <input type="checkbox" checked={picked===cr.id} onChange={()=>setPicked(cr.id)}/>
+          <span><b>{cr.name}</b><small>Custom role with its own set of permissions.</small></span>
+        </label>
+      ))}</div>
+      <Flash kind="error" msg={error}/>
+      <div className="modal-actions"><button type="button" className="secondary-action" onClick={onClose} disabled={busy}>Cancel</button><button className="primary-action" disabled={busy || !email.trim()}>{busy?'Sending…':'Send invitation'}</button></div>
+    </form>
+  </Modal>;
+}
+function PermissionsModal({member,canGrantAdmin,busy,customRoles,onSave,onClose}:{member:TeamMember;canGrantAdmin:boolean;busy:boolean;customRoles:CustomRole[];onSave:(role:string)=>void;onClose:()=>void}) {
   const [picked,setPicked]=useState<string>(member.role==='custom'?(member.custom_role_id||''):member.role);
-  const [customRoles,setCustomRoles]=useState<CustomRole[]>([]);
-  useEffect(() => { api<{roles:CustomRole[]}>('/team/roles?organization_id='+organizationId, accessToken).then(d=>setCustomRoles(d.roles)).catch(()=>{}); }, [organizationId, accessToken]);
   const options = ROLE_OPTIONS.filter(o => o.value !== 'admin' || canGrantAdmin);
   const current = member.role==='custom' ? (member.custom_role_id||'') : member.role;
   return <Modal title="Manage permissions" subtitle={member.email} icon={<KeyRound size={17}/>} onClose={onClose}>
@@ -526,54 +600,6 @@ function PermissionsModal({member,canGrantAdmin,busy,organizationId,accessToken,
     ))}</div>
     <div className="modal-actions"><button className="secondary-action" onClick={onClose} disabled={busy}>Cancel</button><button className="primary-action" onClick={()=>onSave(picked)} disabled={busy || !picked || picked===current}>{busy?'Saving…':'Save changes'}</button></div>
   </Modal>;
-}
-
-function emptyPermissions(): RolePermission[] {
-  return PERMISSION_RESOURCES.map(r => ({ resource: r.value, can_view: false, can_create: false, can_edit: false, can_delete: false }));
-}
-function RolesManager({organizationId,role,accessToken}:{organizationId:string;role:Membership['role'];accessToken:string}) {
-  const [roles,setRoles]=useState<CustomRole[]>([]); const [loading,setLoading]=useState(true); const [error,setError]=useState('');
-  const [busyId,setBusyId]=useState(''); const [editing,setEditing]=useState<CustomRole|'new'|null>(null);
-  if (!['owner','admin'].includes(role)) return null;
-  const load = useCallback(async () => {
-    setLoading(true); setError('');
-    try { const data = await api<{roles:CustomRole[]}>('/team/roles?organization_id='+organizationId, accessToken); setRoles(data.roles); }
-    catch (e) { setError(e instanceof Error ? e.message : 'Could not load custom roles.'); }
-    finally { setLoading(false); }
-  }, [organizationId, accessToken]);
-  useEffect(() => { void load(); }, [load]);
-  const save = async (name: string, permissions: RolePermission[], roleId?: string) => {
-    setBusyId(roleId || 'new'); setError('');
-    try {
-      if (roleId) await api(`/team/roles/${roleId}`, accessToken, { method: 'PUT', body: { organization_id: organizationId, name, permissions } });
-      else await api('/team/roles', accessToken, { method: 'POST', body: { organization_id: organizationId, name, permissions } });
-      toast(roleId ? 'Role updated' : 'Role created'); setEditing(null); await load();
-    } catch (e) { setError(e instanceof Error ? e.message : 'Could not save that role.'); }
-    finally { setBusyId(''); }
-  };
-  const remove = async (r: CustomRole) => {
-    const ok = await confirmDialog(`Delete the "${r.name}" role?`, { confirmText: 'Delete', danger: true });
-    if (!ok) return;
-    setBusyId(r.id); setError('');
-    try { await api(`/team/roles/${r.id}?organization_id=${organizationId}`, accessToken, { method: 'DELETE' }); toast('Role deleted'); await load(); }
-    catch (e) { setError(e instanceof Error ? e.message : 'Could not delete that role.'); }
-    finally { setBusyId(''); }
-  };
-  return <section className="panel settings-card">
-    <div className="settings-icon"><ShieldCheck size={19}/></div><h3>Custom roles</h3><p>Build roles with their own granular permissions per resource, beyond the built-in Viewer/Operator/Admin roles.</p>
-    <Flash kind="error" msg={error}/>
-    {loading ? <Skeleton rows={2}/> : !roles.length ? <EmptyState icon={<ShieldCheck size={22}/>} title="No custom roles yet" text="Create one to assign fine-grained permissions to a teammate."/> : <div className="table-wrap"><table>
-      <thead><tr><th>ROLE</th><th>ACTIONS</th></tr></thead>
-      <tbody>{roles.map(r => (
-        <tr key={r.id}>
-          <td>{r.name}</td>
-          <td><div className="row-actions"><button className="secondary-action sm" disabled={busyId===r.id} onClick={()=>setEditing(r)}><Pencil size={14}/>Edit</button><button className="danger-action sm" disabled={busyId===r.id} onClick={()=>remove(r)}><Trash2 size={14}/>Delete</button></div></td>
-        </tr>
-      ))}</tbody>
-    </table></div>}
-    <button className="secondary-action" onClick={()=>setEditing('new')}><Plus size={15}/>Create role</button>
-    {editing && <CustomRoleModal role={editing==='new'?null:editing} busy={!!busyId} onSave={(name,perms)=>save(name, perms, editing==='new'?undefined:editing.id)} onClose={()=>setEditing(null)}/>}
-  </section>;
 }
 function CustomRoleModal({role,busy,onSave,onClose}:{role:CustomRole|null;busy:boolean;onSave:(name:string,permissions:RolePermission[])=>void;onClose:()=>void}) {
   const [name,setName]=useState(role?.name||'');

@@ -915,22 +915,31 @@ async function handle(req: Request): Promise<Response> {
     const body = await readJson(req);
     const organizationId = String(body.organization_id || "");
     const email = String(body.email || "").trim().toLowerCase();
-    const role = String(body.role || "viewer");
+    const roleRaw = String(body.role || "viewer");
+    const isCustomRoleId = /^[0-9a-f-]{36}$/i.test(roleRaw);
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return fail("Enter a valid email address");
-    if (!["admin", "operator", "viewer"].includes(role)) return fail("Invalid workspace role");
+    if (!isCustomRoleId && !["admin", "operator", "viewer"].includes(roleRaw)) return fail("Invalid workspace role");
     const { role: callerRole } = await requirePermission(req, organizationId, "team", "create");
-    if (role === "admin" && callerRole !== "owner") return fail("Only the owner can grant admin access", 403);
+    if (roleRaw === "admin" && callerRole !== "owner") return fail("Only the owner can grant admin access", 403);
+    let customRoleId: string | null = null;
+    let role: string = roleRaw;
+    if (isCustomRoleId) {
+      const { data: customRole } = await admin.from("custom_roles").select("id,name").eq("id", roleRaw).eq("organization_id", organizationId).maybeSingle();
+      if (!customRole) return fail("Custom role not found in this workspace", 404);
+      customRoleId = customRole.id;
+      role = "custom";
+    }
     // redirectTo matters: without it Supabase falls back to the Site URL configured in the
     // Auth dashboard, which may not point anywhere that shows a "set your password" screen -
     // the invited person would otherwise land signed-in-but-passwordless on a generic page.
     const { data: inviteData, error: inviteError } = await admin.auth.admin.inviteUserByEmail(email, { redirectTo: APP_URL });
     if (inviteError || !inviteData.user) return fail("Invitation could not be sent. Check Auth email/SMTP settings or whether this user already exists.", 502);
     const { error: memberError } = await admin.from("organization_members").insert({
-      organization_id: organizationId, user_id: inviteData.user.id, role,
+      organization_id: organizationId, user_id: inviteData.user.id, role, custom_role_id: customRoleId,
     });
     if (memberError) return fail("Invitation sent, but workspace membership could not be assigned. Contact the owner.", 500);
-    await audit(organizationId, "user", user.id, "invite_member", "organization_member", inviteData.user.id, { role });
-    return json({ ok: true, email, role });
+    await audit(organizationId, "user", user.id, "invite_member", "organization_member", inviteData.user.id, { role, custom_role_id: customRoleId });
+    return json({ ok: true, email, role, custom_role_id: customRoleId });
   }
 
   if (req.method === "GET" && path === "/team/members") {
