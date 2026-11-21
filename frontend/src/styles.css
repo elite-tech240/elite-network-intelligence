@@ -664,3 +664,76 @@ small,.muted{font-size:var(--fs-sm)}
 .esxi-vm-count{margin-left:auto}
 .esxi-empty-vms{padding:0 18px 16px}
 .esxi-host-input{flex:1;min-width:200px;height:38px;padding:0 12px;border-radius:8px;border:1px solid var(--border,#2a2f3a);background:var(--panel-2,#12151c);color:inherit}
+
+/* v1.5 layout + Virtualization polish */
+/* scrolling: no sideways scroll, page scrolls under a sticky topbar */
+html,body{overflow-x:hidden}
+.main{overflow-x:clip}
+.topbar{position:sticky;top:0;z-index:40;backdrop-filter:blur(12px)}
+/* the animated top rail must never poke outside its card */
+.esxi-host-card{overflow:hidden!important}
+.esxi-installer{overflow:visible!important}.esxi-installer::before{display:none}
+
+/* sidebar profile */
+.sidebar-bottom{padding-top:12px}
+.profile{display:flex;align-items:center;gap:10px;padding:12px 8px 4px!important;border-top:1px solid var(--stroke)!important;min-width:0}
+.profile .avatar{flex:0 0 32px;width:32px;height:32px;border-radius:50%;font-size:13px}
+.profile>div:nth-child(2){flex:1;min-width:0;display:grid;gap:2px}
+.profile b{font-size:var(--fs-sm)!important;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.profile small{margin:0!important;font-size:var(--fs-xs)!important;text-transform:capitalize}
+.profile .mini-icon{flex:0 0 32px;width:32px;height:32px;border-radius:8px;color:var(--muted2)}
+.profile .mini-icon:hover{background:#ffffff0d;color:var(--text)}
+
+/* Virtualization page */
+.virt-page{gap:28px}
+.esxi-installer{padding:0!important;gap:0}
+.esxi-installer .installer-head{padding:22px 24px 20px;border-bottom:1px solid var(--stroke)}
+.esxi-installer .installer-head h3{margin:0 0 6px}
+.esxi-installer .installer-head p{margin:0;max-width:720px;color:var(--muted2);font-size:var(--fs-sm)}
+.esxi-installer>.muted{padding:20px 24px;margin:0}
+.esxi-installer .installer-step{padding:22px 24px;gap:16px;border-top:1px solid var(--stroke)}
+.esxi-installer .installer-head+.installer-step{border-top:0}
+.esxi-installer .step-num{margin-top:-2px}
+.esxi-installer .step-body{gap:14px}
+.esxi-installer .step-body h4{margin:4px 0 0;font-size:var(--fs);font-weight:600}
+.esxi-installer .step-body p{margin:0;line-height:1.6}
+.esxi-installer .installer-step.disabled .step-body h4{color:var(--muted2)}
+.esxi-installer .installer-step.disabled .step-num{opacity:.55}
+.esxi-connect-row{display:grid;grid-template-columns:minmax(180px,240px) minmax(0,1fr) auto;gap:12px;align-items:center}
+.esxi-connect-row .select,.esxi-connect-row .installer-select{min-width:0;width:100%}
+.esxi-connect-row .esxi-host-input{min-width:0;width:100%}
+.esxi-installer .primary-action{height:42px!important;padding:0 20px;white-space:nowrap}
+.esxi-installer .cmd-box{overflow-x:auto}
+.esxi-installer .token-meta{font-size:var(--fs-xs)}
+
+.esxi-section{display:flex;flex-direction:column;gap:14px}
+.esxi-section-head{display:flex;align-items:center;gap:10px;padding:0 2px}
+.esxi-section-head h3{margin:0;font:600 var(--fs-md) 'Space Grotesk'}
+.esxi-count{min-width:22px;height:22px;padding:0 7px;border-radius:11px;background:#f5630f22;color:#ff9a5c;font:700 var(--fs-xs)/22px 'DM Sans';text-align:center}
+.esxi-section-head p{margin:0 0 0 auto;font-size:var(--fs-sm);color:var(--muted2)}
+.esxi-host-list{display:flex;flex-direction:column;gap:12px}
+.esxi-host-card{margin:0!important;padding:0}
+.esxi-host-head{display:flex;align-items:center;gap:12px;width:100%;padding:14px 20px;min-height:64px;background:none;border:0;color:inherit;font:inherit;cursor:default}
+.esxi-toggle{flex:0 0 30px;width:30px;height:30px;display:grid;place-items:center;border:0;border-radius:8px;background:none;color:var(--muted2);cursor:pointer}
+.esxi-toggle:hover{background:#ffffff0d;color:var(--text)}
+.esxi-host-head .device-icon{flex:0 0 30px;width:30px;height:30px;border-radius:8px}
+.esxi-host-name{display:grid;gap:2px;min-width:0;padding:0;border:0;background:none;color:inherit;font:inherit;text-align:start;cursor:pointer;text-decoration:none!important}
+.esxi-host-name b{font-size:var(--fs);font-weight:600;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.esxi-host-name small{font-size:var(--fs-xs);color:var(--muted2)}
+.esxi-host-name:hover b{color:#ff9a5c}
+.esxi-vm-count{margin-inline-start:auto;font-size:var(--fs-sm);color:var(--muted2);white-space:nowrap}
+.esxi-vm-table{border-top:1px solid var(--stroke)}
+.esxi-empty-vms{margin:0;padding:16px 20px 18px 62px;border-top:1px solid var(--stroke);font-size:var(--fs-sm);color:var(--muted2)}
+
+@media(max-width:900px){
+  .esxi-connect-row{grid-template-columns:1fr}
+  .esxi-installer .primary-action{width:100%}
+}
+@media(max-width:650px){
+  .esxi-installer .installer-head,.esxi-installer .installer-step{padding:18px 16px}
+  .esxi-host-head{flex-wrap:wrap;padding:12px 14px}
+  .esxi-vm-count{flex-basis:100%;margin-inline-start:72px}
+  .esxi-empty-vms{padding:14px 16px}
+  .esxi-section-head p{flex-basis:100%;margin:0}
+  .esxi-section-head{flex-wrap:wrap}
+}

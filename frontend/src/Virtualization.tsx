@@ -19,22 +19,28 @@ function CopyButton({ text }: { text: string }) {
 function HostCard({ host, vms, onOpen }: { host: Device; vms: Device[]; onOpen: (id: string) => void }) {
   const [open, setOpen] = useState(true);
   const online = vms.filter(v => deviceStatus(v) === 'online').length;
-  return <div className="panel page-panel esxi-host-card">
-    <button type="button" className="esxi-host-head" onClick={() => setOpen(o => !o)}>
-      {open ? <ChevronDown size={16}/> : <ChevronRight size={16}/>}
-      <Server size={16}/>
-      <b onClick={e => { e.stopPropagation(); onOpen(host.id); }} className="esxi-host-name">{host.hostname}</b>
-      <span className={`status-pill ${deviceStatus(host) === 'online' ? 'online' : deviceStatus(host) === 'offline' ? 'offline' : 'pending'}`}><i/>{deviceStatus(host)}</span>
-      <span className="muted esxi-vm-count">{vms.length} VM{vms.length === 1 ? '' : 's'} · {online} running</span>
-    </button>
-    {open && (vms.length ? <div className="table-wrap"><table><thead><tr><th>VM</th><th>GUEST OS</th><th>STATUS</th><th>LAST SEEN</th></tr></thead><tbody>
+  const st = deviceStatus(host);
+  return <div className="panel esxi-host-card">
+    <div className="esxi-host-head">
+      <button type="button" className="esxi-toggle" aria-expanded={open} aria-label={open ? 'Collapse VMs' : 'Expand VMs'} onClick={() => setOpen(o => !o)}>
+        {open ? <ChevronDown size={16}/> : <ChevronRight size={16}/>}
+      </button>
+      <span className="device-icon"><Server size={15}/></span>
+      <button type="button" className="esxi-host-name" onClick={() => onOpen(host.id)}>
+        <b>{host.hostname}</b>
+        {host.ip_address && host.ip_address !== host.hostname && <small>{host.ip_address}</small>}
+      </button>
+      <span className={`status-pill ${st === 'online' ? 'online' : st === 'offline' ? 'offline' : 'pending'}`}><i/>{st}</span>
+      <span className="esxi-vm-count">{vms.length} VM{vms.length === 1 ? '' : 's'} · {online} running</span>
+    </div>
+    {open && (vms.length ? <div className="table-wrap esxi-vm-table"><table><thead><tr><th>VM</th><th>GUEST OS</th><th>STATUS</th><th>LAST SEEN</th></tr></thead><tbody>
       {vms.map(v => <tr key={v.id} className="row-click" onClick={() => onOpen(v.id)}>
         <td><div className="device-name"><span className="device-icon"><HardDrive size={14}/></span><b>{v.hostname}</b></div></td>
         <td>{(v as any).os_name ?? '—'}</td>
         <td><span className={`status-pill ${deviceStatus(v) === 'online' ? 'online' : deviceStatus(v) === 'offline' ? 'offline' : 'pending'}`}><i/>{deviceStatus(v)}</span></td>
         <td>{v.last_seen_at ? new Date(v.last_seen_at).toLocaleString() : 'Never'}</td>
       </tr>)}
-    </tbody></table></div> : <p className="muted esxi-empty-vms">No VMs reported yet.</p>)}
+    </tbody></table></div> : <p className="esxi-empty-vms">{st === 'online' ? 'No VMs reported yet.' : 'No VMs reported yet — the connector for this host is not running.'}</p>)}
   </div>;
 }
 
@@ -69,13 +75,13 @@ export function VirtualizationPage({ devices, sites, organizationId, accessToken
       : vars.map(([k, v]) => `${k}='${v}'`).join(' ') + ' python3 esxi_connector.py'
     : '';
 
-  return <div className="sites-workspace">
-    <section className="panel page-panel installer">
+  return <div className="sites-workspace virt-page">
+    <section className="panel page-panel installer esxi-installer">
       <header className="installer-head"><h3>Connect an ESXi host</h3><p>Works with standalone ESXi 6+ — no vCenter needed. Run the connector on any machine that can reach the host's management network (port 443).</p></header>
       {!canManage ? <p className="muted">Your role is read-only for infrastructure setup.</p> : <>
         <div className="installer-step"><span className="step-num">1</span><div className="step-body">
           <h4>Choose where the host lives</h4>
-          <div className="installer-row">
+          <div className="installer-row esxi-connect-row">
             <Select className="filter-select installer-select" value={siteId} onChange={e => { setSite(e.target.value); setToken(''); }} aria-label="Site">
               {sites.map(v => <option key={v.id} value={v.id}>{v.name}</option>)}
             </Select>
@@ -102,8 +108,10 @@ export function VirtualizationPage({ devices, sites, organizationId, accessToken
       </>}
     </section>
 
-    <section className="panel-head" style={{ marginTop: 8 }}><div><h3>Hosts</h3><p>{hosts.length} ESXi host{hosts.length === 1 ? '' : 's'}</p></div></section>
-    {hosts.length ? hosts.map(h => <HostCard key={h.id} host={h} vms={vmsOf(h.id)} onOpen={setOpenId}/>) : <section className="panel page-panel"><EmptyState icon={<Server size={22}/>} title="No ESXi hosts yet" text="Connect one above and it will appear here within a minute."/></section>}
+    <div className="esxi-section">
+      <div className="esxi-section-head"><h3>Hosts</h3><span className="esxi-count">{hosts.length}</span><p>{hosts.filter(h => deviceStatus(h) === 'online').length} online · {hosts.filter(h => deviceStatus(h) !== 'online').length} offline</p></div>
+      {hosts.length ? <div className="esxi-host-list">{hosts.map(h => <HostCard key={h.id} host={h} vms={vmsOf(h.id)} onOpen={setOpenId}/>)}</div> : <section className="panel page-panel"><EmptyState icon={<Server size={22}/>} title="No ESXi hosts yet" text="Connect one above and it will appear here within a minute."/></section>}
+    </div>
 
     {openId && <Drawer title={devices.find(d => d.id === openId)?.hostname ?? 'Device'} onClose={() => setOpenId('')}><DeviceDetail devices={devices.filter(d => d.id === openId) as any}/></Drawer>}
   </div>;
