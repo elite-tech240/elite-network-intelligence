@@ -38,7 +38,7 @@ except ImportError:
     )
 
 STATE_FILE = Path(__file__).resolve().parent / "esxi-connector-state.json"
-POLL_SECONDS = int(os.environ.get("ESXI_POLL_SECONDS", "30"))
+POLL_SECONDS = int(os.environ.get("ESXI_POLL_SECONDS", "10"))
 CONNECTOR_VERSION = "0.1.0"
 
 

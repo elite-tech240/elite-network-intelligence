@@ -204,7 +204,7 @@ export function DeviceDetail({ devices, initialId }: { devices: Dev[]; initialId
     const { data: l } = await supabase.from('device_metrics').select('recorded_at,uptime_seconds,top_processes').eq('device_id', id).order('recorded_at', { ascending: false }).limit(1); setLatest(l?.[0] ?? null);
     const { data: lg } = await supabase.from('device_logs').select('id,level,message,logged_at').eq('device_id', id).order('logged_at', { ascending: false }).limit(6); setLogs(lg ?? []);
   }, [id, range]);
-  useTick(() => void load(), 20000, [load]);
+  useTick(() => void load(), 5000, [load]);
   // Append each new sample as it arrives, so the chart moves between refreshes.
   useEffect(() => {
     if (!supabase || !id || RANGES[range].hours > 24) return;
