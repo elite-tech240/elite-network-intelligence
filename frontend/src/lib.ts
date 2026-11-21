@@ -5,7 +5,13 @@ const key = import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined;
 export const configured = Boolean(url && key && !url.includes('YOUR_PROJECT') && !key.includes('YOUR_'));
 export const apiUrl = (import.meta.env.VITE_API_URL as string | undefined)?.replace(/\/$/, '') ?? '';
 export const supabase: SupabaseClient | null = configured ? createClient(url!, key!) : null;
-export const LATEST_AGENT_VERSION = '0.4.0';
+export const LATEST_AGENT_VERSION = '0.4.0'; // fallback only; the live value comes from agent_releases
+
+export async function publishedAgentVersion(): Promise<string> {
+  if (!supabase) return LATEST_AGENT_VERSION;
+  const { data } = await supabase.from('agent_releases').select('version').eq('id', true).maybeSingle();
+  return data?.version ?? LATEST_AGENT_VERSION;
+}
 
 export type Role = 'owner' | 'admin' | 'operator' | 'viewer';
 

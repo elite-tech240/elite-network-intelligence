@@ -1,8 +1,8 @@
 import { FormEvent, useCallback, useEffect, useState } from 'react';
-import { supabase, api, fmtBps, fmtUptime, ago, LATEST_AGENT_VERSION, type Role } from './lib';
+import { supabase, api, fmtBps, fmtUptime, ago, LATEST_AGENT_VERSION, publishedAgentVersion, type Role } from './lib';
 import { Maximize2 } from 'lucide-react';
 import { LineChart, Sparkline, type Point } from './Chart';
-import { Flash, confirmDialog, Skeleton, Select } from './ui';
+import { Flash, confirmDialog, Skeleton, Select, toast } from './ui';
 
 type Dev = { id: string; hostname: string; agent_version?: string | null };
 const isOp = (r: Role) => ['owner', 'admin', 'operator'].includes(r);
@@ -206,12 +206,42 @@ export function DeviceDetail({ devices, initialId }: { devices: Dev[]; initialId
   }, [id, range]);
   useTick(() => void load(), 20000, [load]);
   const dev = devices.find(d => d.id === id); const series = (k: string): Point[] => pts.map(p => ({ t: p.t, v: p[k] }));
-  const outdated = dev?.agent_version && dev.agent_version !== LATEST_AGENT_VERSION;
+  const [latestVersion, setLatestVersion] = useState(LATEST_AGENT_VERSION);
+  const [upgrade, setUpgrade] = useState<any>(null); const [busy, setBusy] = useState(false);
+  useEffect(() => { void publishedAgentVersion().then(setLatestVersion); }, []);
+  const loadUpgrade = useCallback(async () => {
+    if (!supabase || !id) { setUpgrade(null); return; }
+    const { data } = await supabase.from('pending_agent_commands').select('id,status,result,error,created_at')
+      .eq('device_id', id).eq('command', 'upgrade').order('created_at', { ascending: false }).limit(1);
+    setUpgrade(data?.[0] ?? null);
+  }, [id]);
+  useEffect(() => { void loadUpgrade(); }, [loadUpgrade]);
+  useTick(() => void loadUpgrade(), 10000, [loadUpgrade]);
+  const outdated = dev?.agent_version && dev.agent_version !== latestVersion;
+  const inFlight = upgrade && ['queued', 'delivered', 'running'].includes(upgrade.status);
+  const startUpgrade = async () => {
+    if (!supabase || !id) return;
+    setBusy(true);
+    try {
+      const { error } = await supabase.rpc('request_agent_upgrade', { p_device_id: id });
+      if (error) throw error;
+      toast(`Update to ${latestVersion} sent to ${dev?.hostname ?? 'the device'}`);
+      await loadUpgrade();
+    } catch (err: any) { toast(err?.message ?? 'Could not start the update'); }
+    finally { setBusy(false); }
+  };
   if (!devices.length) return <section className="panel empty-panel"><h3>No devices yet</h3><p>Enroll an agent to see charts here.</p></section>;
   return <div className="sites-workspace">
     <div className="filter-bar"><Select className="filter-select" value={id} onChange={e => setId(e.target.value)}>{devices.map(d => <option key={d.id} value={d.id}>{d.hostname}</option>)}</Select>
       <Tabs items={Object.entries(RANGES).map(([k, v]) => ({ id: k, label: v.label }))} active={range} onChange={setRange}/></div>
-    <div className="kpi-strip"><div className="panel mini-kpi"><span>Uptime</span><b>{fmtUptime(latest?.uptime_seconds)}</b></div><div className="panel mini-kpi"><span>Last report</span><b>{ago(latest?.recorded_at)}</b></div><div className="panel mini-kpi"><span>Agent</span><b>{dev?.agent_version ?? 'unknown'}</b>{outdated && <small className="txt-warn">update available ({LATEST_AGENT_VERSION})</small>}</div></div>
+    <div className="kpi-strip"><div className="panel mini-kpi"><span>Uptime</span><b>{fmtUptime(latest?.uptime_seconds)}</b></div><div className="panel mini-kpi"><span>Last report</span><b>{ago(latest?.recorded_at)}</b></div><div className="panel mini-kpi"><span>Agent</span><b>{dev?.agent_version ?? 'unknown'}</b>
+      {inFlight
+        ? <small className="txt-warn">{upgrade.status === 'running' ? `installing ${latestVersion}…` : `update queued (${latestVersion})`}</small>
+        : outdated
+          ? <><small className="txt-warn">update available ({latestVersion})</small><button className="primary-action sm agent-update" onClick={startUpgrade} disabled={busy}>{busy ? 'Sending…' : 'Update agent'}</button></>
+          : upgrade?.status === 'failed'
+            ? <small className="txt-bad">last update failed: {upgrade.error ?? 'unknown error'}</small>
+            : <small className="txt-ok">up to date</small>}</div></div>
     <div className="two-col">
       <section className="panel chart-panel"><h3>CPU</h3><LineChart points={series('cpu')} max={100} unit="%"/></section>
       <section className="panel chart-panel"><h3>Memory</h3><LineChart points={series('mem')} max={100} unit="%" color="#4fa3ff"/></section>

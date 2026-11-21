@@ -1,9 +1,12 @@
 """Elite endpoint and read-only SNMP telemetry agent."""
+import hashlib
 import json
 import os
 import platform
+import shutil
 import socket
 import subprocess
+import tempfile
 import sys
 import time
 from pathlib import Path
@@ -34,7 +37,7 @@ from collectors.host import collect_host_metrics
 from collectors.logs import collect_logs
 from collectors.discovery import collect_neighbours
 
-AGENT_VERSION = "0.4.0"
+AGENT_VERSION = "0.5.0"
 
 API_URL = os.getenv("ELITE_API_URL", "http://127.0.0.1:8000").rstrip("/")
 ENROLLMENT_TOKEN = os.getenv("ELITE_ENROLLMENT_TOKEN", "")
@@ -161,6 +164,106 @@ def post_optional(state, path, body):
         return False
 
 
+ALLOWED_DOWNLOAD_HOSTS = ("github.com", "objects.githubusercontent.com", "release-assets.githubusercontent.com")
+UPGRADE_URL = API_URL.rsplit("/", 1)[0] + "/agent-upgrade"
+
+
+def report_upgrade(state, command_id, status, detail):
+    """Tell the server how the upgrade went."""
+    body = {"id": command_id, "status": status}
+    body["error" if status == "failed" else "result"] = detail
+    try:
+        requests.post(
+            UPGRADE_URL + "/" + state["device_id"],
+            json=body,
+            headers={"Authorization": "Bearer " + state["device_token"]},
+            timeout=20,
+        )
+    except requests.RequestException as exc:
+        print("Could not report upgrade result:", exc)
+
+
+def fetch_upgrade(state):
+    """Ask the server whether this device should install a new agent."""
+    try:
+        response = requests.get(
+            UPGRADE_URL + "/" + state["device_id"],
+            headers={"Authorization": "Bearer " + state["device_token"]},
+            timeout=20,
+        )
+        response.raise_for_status()
+        return response.json().get("upgrade")
+    except requests.RequestException as exc:
+        print("Could not read upgrade instructions:", exc)
+        return None
+
+
+def run_upgrade(command):
+    """Download the installer named by the server and run it. Returns (status, detail)."""
+    params = command.get("parameters") or {}
+    target = str(params.get("target_version") or "")
+    url = str(params.get("download_url") or "")
+    if not target:
+        return "failed", "The server did not say which version to install"
+    if target == AGENT_VERSION:
+        return "completed", "Already running " + AGENT_VERSION
+    if not url:
+        return "failed", "No installer published for this platform in " + target
+
+    # Only ever run something fetched from the project's own release assets.
+    try:
+        from urllib.parse import urlparse
+        parsed = urlparse(url)
+        host = (parsed.hostname or "").lower()
+        if parsed.scheme != "https" or not any(host == h or host.endswith("." + h) for h in ALLOWED_DOWNLOAD_HOSTS):
+            return "failed", "Refused to download from " + (host or "an unknown host")
+    except Exception as exc:
+        return "failed", "Could not read the download URL: " + str(exc)
+
+    work = Path(tempfile.mkdtemp(prefix="eni-upgrade-"))
+    name = str(params.get("asset_name") or "").strip() or ("installer.exe" if os.name == "nt" else "install.sh")
+    installer = work / os.path.basename(name)
+    try:
+        with requests.get(url, stream=True, timeout=120) as response:
+            response.raise_for_status()
+            size = 0
+            digest = hashlib.sha256()
+            with open(installer, "wb") as handle:
+                for chunk in response.iter_content(chunk_size=65536):
+                    if not chunk:
+                        continue
+                    size += len(chunk)
+                    if size > 120 * 1024 * 1024:
+                        return "failed", "The installer is larger than expected, so it was not run"
+                    digest.update(chunk)
+                    handle.write(chunk)
+        expected = str(params.get("sha256") or "").lower().strip()
+        if expected and digest.hexdigest() != expected:
+            return "failed", "The installer did not match its published checksum"
+        print("Downloaded", installer.name, size, "bytes for", target)
+
+        if os.name == "nt":
+            # Inno Setup installs silently over the running copy and restarts the service.
+            subprocess.Popen(
+                'start "" /b "' + str(installer) + '" /VERYSILENT /SUPPRESSMSGBOXES /NORESTART',
+                shell=True, close_fds=True,
+            )
+            return "running", "Installing " + target
+        os.chmod(installer, 0o755)
+        subprocess.Popen(
+            ["/bin/sh", str(installer)],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True,
+        )
+        return "running", "Installing " + target
+    except requests.RequestException as exc:
+        return "failed", "Download failed: " + str(exc)
+    except Exception as exc:
+        return "failed", "Upgrade failed: " + str(exc)
+    finally:
+        if os.name != "nt":
+            shutil.rmtree(work, ignore_errors=True)
+
+
 def schedule_windows_uninstall():
     """Launch the registered Inno Setup uninstaller after this service exits."""
     if os.name != "nt":
@@ -223,10 +326,20 @@ def main():
                 print("Interface telemetry accepted:", interface_result.get("accepted", 0))
             except requests.RequestException as exc:
                 print("Interface telemetry delivery failed:", exc)
-            if any(c.get("command") == "uninstall" for c in result.get("commands", [])):
+            commands = result.get("commands", []) or []
+            if any(c.get("command") == "uninstall" for c in commands):
                 if schedule_windows_uninstall():
                     return
                 raise SystemExit("Could not schedule remote uninstall.")
+            for command in commands:
+                if command.get("command") != "upgrade":
+                    continue
+                instructions = fetch_upgrade(state)
+                if not instructions:
+                    continue
+                status, detail = run_upgrade({"parameters": instructions})
+                print("Upgrade", status + ":", detail)
+                report_upgrade(state, instructions.get("id"), status, detail)
         except requests.RequestException as exc:
             print("Endpoint telemetry delivery failed:", exc)
 

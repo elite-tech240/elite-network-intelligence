@@ -1,12 +1,12 @@
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Activity, Bell, Boxes, Cable, ChevronDown, CircleHelp, LayoutDashboard, LogOut, Network, Search, Settings, ShieldCheck, Wifi, ScrollText, Globe2, FileBarChart, ClipboardList, Gauge, MonitorUp, Zap, LockKeyhole, Eye, EyeOff, MapPin, Server, ArrowUpRight, UserRound, KeyRound, Sun, Moon, Languages, MoreHorizontal, Building2, Check, Plus, Trash2 } from 'lucide-react';
+import { Activity, Bell, Boxes, Cable, ChevronDown, CircleHelp, LayoutDashboard, LogOut, Network, Search, Settings, ShieldCheck, Wifi, ScrollText, Globe2, FileBarChart, ClipboardList, Gauge, MonitorUp, Zap, LockKeyhole, Eye, EyeOff, MapPin, Server, ArrowUpRight, UserRound, KeyRound, Sun, Moon, Languages, MoreHorizontal, Building2, Check, Plus, Trash2, RefreshCw } from 'lucide-react';
 import type { Session, User } from '@supabase/supabase-js';
 
-type Device = { id: string; hostname: string; ip_address: string | null; status: string; device_type: string | null; last_seen_at: string | null; site_id?: string; archived_at?: string | null };
+type Device = { id: string; hostname: string; ip_address: string | null; status: string; device_type: string | null; last_seen_at: string | null; site_id?: string; archived_at?: string | null; agent_version?: string | null };
 type Site = { id: string; name: string; location: string | null };
 type Net = { id: string; name: string; cidr: string | null; site_id: string };
 type Membership = { organization_id: string; role: 'owner' | 'admin' | 'operator' | 'viewer'; organizations?: { id: string; name: string }[] | null };
-import { supabase, configured, apiUrl, fmtBps } from './lib';
+import { supabase, configured, apiUrl, fmtBps, LATEST_AGENT_VERSION, publishedAgentVersion } from './lib';
 import { AgentInstaller } from './AgentInstaller';
 import { Toaster, ConfirmHost, Flash, confirmDialog, toast, usePrefs, tr, CommandPalette, Drawer, Skeleton, EmptyState, useTable, Th, Pager, Checklist, Select, Counter, type Command, type Prefs } from './ui';
 import { LineChart, type Point } from './Chart';
@@ -100,7 +100,7 @@ export default function App() {
       const orgId = picked.organization_id;
       supabase.from('alert_events').select('id', { count: 'exact', head: true }).eq('organization_id', orgId).eq('status', 'open').then(({ count }) => setOpenAlerts(count ?? 0));
       const [deviceResult, siteResult, networkResult] = await Promise.all([
-        supabase.from('devices').select('id,hostname,ip_address,status,device_type,last_seen_at,site_id,archived_at').eq('organization_id', orgId).order('last_seen_at', { ascending: false }),
+        supabase.from('devices').select('id,hostname,ip_address,status,device_type,last_seen_at,site_id,archived_at,agent_version').eq('organization_id', orgId).order('last_seen_at', { ascending: false }),
         supabase.from('sites').select('id,name,location').eq('organization_id', orgId).order('name'),
         supabase.from('networks').select('id,name,cidr,site_id').eq('organization_id', orgId).order('name'),
       ]);
@@ -267,9 +267,26 @@ function DevicesPage({devices,archivedDevices,loading,organizationId,role,access
  useEffect(()=>{let active=true;if(!supabase)return;const loadMetrics=()=>{supabase!.from('device_metrics').select('device_id,cpu_percent,memory_percent,disk_percent,recorded_at').eq('organization_id',organizationId).order('recorded_at',{ascending:false}).limit(250).then(({data})=>{if(active)setMetrics(data??[]);});};void loadMetrics();const timer=window.setInterval(loadMetrics,15000);return()=>{active=false;window.clearInterval(timer);};},[organizationId,devices.length]);
  const latest=new Map<string,any>();metrics.forEach(m=>{if(!latest.has(m.device_id))latest.set(m.device_id,m);});
  const canManage=['owner','admin'].includes(role);
+ const [latestVersion,setLatestVersion]=useState(LATEST_AGENT_VERSION),[updBusy,setUpdBusy]=useState(false);
+ useEffect(()=>{void publishedAgentVersion().then(setLatestVersion);},[]);
+ const outdated=devices.filter(d=>d.agent_version&&d.agent_version!==latestVersion);
+ const updateAll=async()=>{
+   if(!supabase)return;
+   const ok=await confirmDialog(`Send the update to ${latestVersion} to ${outdated.length} device${outdated.length===1?'':'s'}? Only devices reporting right now will pick it up.`,{title:'Update outdated agents',confirmText:'Send update'});
+   if(!ok)return;
+   setUpdBusy(true);
+   try{
+     const {data,error}=await supabase.rpc('request_agent_upgrade_all',{p_organization_id:organizationId});
+     if(error)throw error;
+     const n=Number(data??0);
+     toast(n?`Update sent to ${n} device${n===1?'':'s'}`:'No device was ready for the update');
+     onRefresh();
+   }catch(err:any){toast(err?.message??'Could not send the update');}
+   finally{setUpdBusy(false);}
+ };
  const action=async(id:string,kind:'archive'|'restore'|'uninstall')=>{const device=[...devices,...archivedDevices].find(d=>d.id===id);if(!device)return;if(kind==='archive'&&deviceStatus(device)!=='offline'){setActionError('Only offline devices can be archived.');return;}if(kind==='uninstall'&&deviceStatus(device)!=='online'){setActionError('Remote uninstall requires an online device.');return;}const prompts={archive:'Archive this offline device? History will be retained.',restore:'Restore this device to active inventory?',uninstall:'Send remote uninstall to this online Windows agent? Local agent files and credentials will be removed; history remains.'};if(!await confirmDialog(prompts[kind]))return;setBusyDevice(id);setActionError('');setActionMessage('');try{const response=await fetch(apiUrl+'/devices/'+id+'/'+kind,{method:'POST',headers:{Authorization:'Bearer '+accessToken}});const body=await response.json();if(!response.ok)throw new Error(body.detail||'Device action failed');setActionMessage(kind==='uninstall'?'Uninstall queued. The agent will remove itself on its next heartbeat.':kind==='archive'?'Device archived. History retained.':'Device restored.');onRefresh();}catch(e){setActionError(e instanceof Error?e.message:'Device action failed.');}finally{setBusyDevice('');}};
  return <div className="sites-workspace"><PageTabs items={[{id:'inventory',label:'Inventory'},{id:'health',label:'Health metrics'},{id:'access',label:'Credentials'},{id:'charts',label:'Charts'},{id:'discovered',label:'Discovered'},{id:'archived',label:'Archived devices'}]} active={tab} onChange={setTab}/><Flash kind="error" msg={actionError}/><Flash kind="success" msg={actionMessage}/>
- {tab==='inventory'&&<section className="panel page-panel"><div className="panel-head"><div><h3>Device inventory</h3><p>{devices.length} active assets · Only offline devices can be archived</p></div><Select className="filter-select" value={filter} onChange={e=>setFilter(e.target.value)}><option value="all">All statuses</option><option value="online">Online</option><option value="offline">Offline</option><option value="degraded">Degraded</option><option value="unknown">Unknown</option></Select></div><DeviceTable devices={filtered} loading={loading} onOpen={setOpenId} onArchive={canManage?id=>action(id,'archive'):undefined} onUninstall={canManage?id=>action(id,'uninstall'):undefined} busyDevice={busyDevice}/></section>}
+ {tab==='inventory'&&<section className="panel page-panel"><div className="panel-head"><div><h3>Device inventory</h3><p>{devices.length} active assets{outdated.length?` · ${outdated.length} on an older agent`:''} · Only offline devices can be archived</p></div>{role==='owner'&&outdated.length>0&&<button className="secondary-action" onClick={updateAll} disabled={updBusy}><RefreshCw size={15}/>{updBusy?'Sending…':`Update ${outdated.length} agent${outdated.length===1?'':'s'}`}</button>}<Select className="filter-select" value={filter} onChange={e=>setFilter(e.target.value)}><option value="all">All statuses</option><option value="online">Online</option><option value="offline">Offline</option><option value="degraded">Degraded</option><option value="unknown">Unknown</option></Select></div><DeviceTable devices={filtered} loading={loading} onOpen={setOpenId} onArchive={canManage?id=>action(id,'archive'):undefined} onUninstall={canManage?id=>action(id,'uninstall'):undefined} busyDevice={busyDevice}/></section>}
  {tab==='health'&&<section className="panel page-panel"><div className="panel-head"><div><h3>Latest device health</h3><p>CPU, memory and disk from authenticated heartbeats.</p></div></div><div className="table-wrap"><table><thead><tr><th>DEVICE</th><th>CPU</th><th>MEMORY</th><th>DISK</th><th>UPDATED</th></tr></thead><tbody>{filtered.map(d=>{const m=latest.get(d.id);return <tr key={d.id}><td>{d.hostname}</td><td>{m?.cpu_percent==null?'—':m.cpu_percent.toFixed(1)+'%'}</td><td>{m?.memory_percent==null?'—':m.memory_percent.toFixed(1)+'%'}</td><td>{m?.disk_percent==null?'—':m.disk_percent.toFixed(1)+'%'}</td><td>{m?.recorded_at?new Date(m.recorded_at).toLocaleString():'No metrics yet'}</td></tr>;})}{!filtered.length&&<tr><td colSpan={5} className="empty">No health metrics available.</td></tr>}</tbody></table></div></section>}
  {tab==='access'&&<section className="panel page-panel"><h3>Device credential control</h3><p>Revoke compromised or retired agent credentials. Telemetry history remains preserved.</p>{canManage?<div className="table-wrap"><table><thead><tr><th>DEVICE</th><th>STATUS</th><th></th></tr></thead><tbody>{devices.map(d=><tr key={d.id}><td>{d.hostname}</td><td>{deviceStatus(d)}</td><td><button className="danger-action" disabled={busyDevice===d.id} onClick={async()=>{if(await confirmDialog('Revoke this credential? The agent must be enrolled again.'))void (async()=>{setBusyDevice(d.id);try{const r=await fetch(apiUrl+'/devices/'+d.id+'/revoke',{method:'POST',headers:{Authorization:'Bearer '+accessToken}});const v=await r.json();if(!r.ok)throw new Error(v.detail||'Revoke failed');onRefresh();}catch(e){setActionError(e instanceof Error?e.message:'Revoke failed');}finally{setBusyDevice('');}})();}}>Revoke credential</button></td></tr>)}</tbody></table></div>:<p className="muted">Only owners and admins can revoke device credentials.</p>}</section>}
  {tab==='charts'&&<DeviceDetail devices={devices as any}/>}
