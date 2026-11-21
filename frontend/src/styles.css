@@ -655,3 +655,12 @@ small,.muted{font-size:var(--fs-sm)}
   .chart-svg path[stroke]{stroke-dasharray:none;stroke-dashoffset:0;animation:none}
   .ov-kpi strong,.ov-metric-head strong,.onboarding-bar i,.donut-ring{animation:none}
 }
+
+/* v1.4 Virtualization: ESXi host cards with a collapsible VM table. */
+.esxi-host-card{margin-bottom:14px;padding:0;overflow:visible}
+.esxi-host-head{display:flex;align-items:center;gap:10px;width:100%;padding:16px 18px;background:none;border:none;color:inherit;cursor:pointer;text-align:left;font:inherit}
+.esxi-host-name{cursor:pointer}
+.esxi-host-name:hover{text-decoration:underline}
+.esxi-vm-count{margin-left:auto}
+.esxi-empty-vms{padding:0 18px 16px}
+.esxi-host-input{flex:1;min-width:200px;height:38px;padding:0 12px;border-radius:8px;border:1px solid var(--border,#2a2f3a);background:var(--panel-2,#12151c);color:inherit}

@@ -1,8 +1,8 @@
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Activity, Bell, Boxes, Cable, ChevronDown, CircleHelp, LayoutDashboard, LogOut, Network, Search, Settings, ShieldCheck, Wifi, ScrollText, Globe2, FileBarChart, ClipboardList, Gauge, MonitorUp, Zap, LockKeyhole, Eye, EyeOff, MapPin, Server, ArrowUpRight, UserRound, KeyRound, Sun, Moon, Languages, MoreHorizontal, Building2, Check, Plus, Trash2, RefreshCw } from 'lucide-react';
+import { Activity, Bell, Boxes, Cable, ChevronDown, CircleHelp, LayoutDashboard, LogOut, Network, Search, Settings, ShieldCheck, Wifi, ScrollText, Globe2, FileBarChart, ClipboardList, Gauge, MonitorUp, Zap, LockKeyhole, Eye, EyeOff, MapPin, Server, ArrowUpRight, UserRound, KeyRound, Sun, Moon, Languages, MoreHorizontal, Building2, Check, Plus, Trash2, RefreshCw, Layers } from 'lucide-react';
 import type { Session, User } from '@supabase/supabase-js';
 
-type Device = { id: string; hostname: string; ip_address: string | null; status: string; device_type: string | null; last_seen_at: string | null; site_id?: string; archived_at?: string | null; agent_version?: string | null };
+type Device = { id: string; hostname: string; ip_address: string | null; status: string; device_type: string | null; last_seen_at: string | null; site_id?: string; archived_at?: string | null; agent_version?: string | null; parent_device_id?: string | null; os_name?: string | null };
 type Site = { id: string; name: string; location: string | null };
 type Net = { id: string; name: string; cidr: string | null; site_id: string };
 type Membership = { organization_id: string; role: 'owner' | 'admin' | 'operator' | 'viewer'; organizations?: { id: string; name: string }[] | null };
@@ -11,9 +11,10 @@ import { AgentInstaller } from './AgentInstaller';
 import { Toaster, ConfirmHost, Flash, confirmDialog, toast, usePrefs, tr, CommandPalette, Drawer, Skeleton, EmptyState, useTable, Th, Pager, Checklist, Select, Counter, type Command, type Prefs } from './ui';
 import { LineChart, type Point } from './Chart';
 import { LogsPage, UptimePage, ReportsPage, AuditPage, PlatformPage, ChannelsPanel, MaintenancePanel, DiscoveryPanel, DeviceDetail, NocWall } from './Monitoring';
+import { VirtualizationPage } from './Virtualization';
 const nav = [
   { label: 'Overview', icon: LayoutDashboard, path: '/' }, { label: 'Devices', icon: Boxes, path: '/devices' },
-  { label: 'Topology', icon: Network, path: '/topology' }, { label: 'Traffic', icon: Activity, path: '/traffic' },
+  { label: 'Topology', icon: Network, path: '/topology' }, { label: 'Virtualization', icon: Layers, path: '/virtualization' }, { label: 'Traffic', icon: Activity, path: '/traffic' },
   { label: 'Alerts', icon: Bell, path: '/alerts' }, { label: 'Logs', icon: ScrollText, path: '/logs' },
   { label: 'Uptime', icon: Globe2, path: '/uptime' }, { label: 'Reports', icon: FileBarChart, path: '/reports' },
   { label: 'Audit log', icon: ClipboardList, path: '/audit' }, { label: 'Sites & Networks', icon: Cable, path: '/sites' },
@@ -100,7 +101,7 @@ export default function App() {
       const orgId = picked.organization_id;
       supabase.from('alert_events').select('id', { count: 'exact', head: true }).eq('organization_id', orgId).eq('status', 'open').then(({ count }) => setOpenAlerts(count ?? 0));
       const [deviceResult, siteResult, networkResult] = await Promise.all([
-        supabase.from('devices').select('id,hostname,ip_address,status,device_type,last_seen_at,site_id,archived_at,agent_version').eq('organization_id', orgId).order('last_seen_at', { ascending: false }),
+        supabase.from('devices').select('id,hostname,ip_address,status,device_type,last_seen_at,site_id,archived_at,agent_version,parent_device_id,os_name').eq('organization_id', orgId).order('last_seen_at', { ascending: false }),
         supabase.from('sites').select('id,name,location').eq('organization_id', orgId).order('name'),
         supabase.from('networks').select('id,name,cidr,site_id').eq('organization_id', orgId).order('name'),
       ]);
@@ -134,6 +135,7 @@ export default function App() {
   const refresh = () => { if (session?.user) void loadWorkspace(session.user); };
   const online = devices.filter(d => deviceStatus(d) === 'online').length;
   const title = tr(lang, page === 'Overview' ? 'Network overview' : page);
+  const nonEsxiDevices = useMemo(() => devices.filter(d => d.device_type !== 'esxi_host' && d.device_type !== 'esxi_vm'), [devices]);
   const commands: Command[] = [
     ...[...nav, adminNav, { label: 'Settings' }].filter(n => n.label !== 'Platform' || (membership && ['owner', 'admin'].includes(membership.role))).map(n => ({ id: 'p-' + n.label, label: tr(lang, n.label), hint: tr(lang, 'Pages'), run: () => go(n.label) })),
     ...devices.map(d => ({ id: 'd-' + d.id, label: d.hostname, hint: (d.ip_address ?? '') + ' · ' + tr(lang, 'Devices'), run: () => go('Devices') })),
@@ -157,7 +159,7 @@ export default function App() {
           <div className="ws-sep"/>
           <button role="menuitem" className="ws-item" onClick={() => { setWsOpen(false); setNewWs(true); }}><Plus size={16}/><span><b>Create workspace</b><small>Start a separate, empty environment</small></span></button>
           </div>}</div>
-      <nav>{[['MONITOR', ['Overview','Devices','Topology','Traffic','Alerts','Logs','Uptime']], ['INSIGHTS', ['Reports','Audit log']], ['MANAGE', ['Sites & Networks', ...(membership && ['owner','admin'].includes(membership.role) ? ['Platform'] : [])]]].map(([group, labels]) => <div key={group as string}><div className="nav-label">{tr(lang, group as string)}</div>{[...nav, adminNav].filter(i => (labels as string[]).includes(i.label)).map(item => <button key={item.label} className={page === item.label ? 'nav-item selected' : 'nav-item'} onClick={() => go(item.label)}><item.icon size={17}/>{tr(lang, item.label)}{item.label === 'Alerts' && openAlerts > 0 && <i className="nav-dot"/>}</button>)}</div>)}</nav>
+      <nav>{[['MONITOR', ['Overview','Devices','Topology','Virtualization','Traffic','Alerts','Logs','Uptime']], ['INSIGHTS', ['Reports','Audit log']], ['MANAGE', ['Sites & Networks', ...(membership && ['owner','admin'].includes(membership.role) ? ['Platform'] : [])]]].map(([group, labels]) => <div key={group as string}><div className="nav-label">{tr(lang, group as string)}</div>{[...nav, adminNav].filter(i => (labels as string[]).includes(i.label)).map(item => <button key={item.label} className={page === item.label ? 'nav-item selected' : 'nav-item'} onClick={() => go(item.label)}><item.icon size={17}/>{tr(lang, item.label)}{item.label === 'Alerts' && openAlerts > 0 && <i className="nav-dot"/>}</button>)}</div>)}</nav>
       <div className="nav-label tools-label">{tr(lang, 'PREFERENCES')}</div>
       <button className={page === 'Settings' ? 'nav-item selected' : 'nav-item'} onClick={() => go('Settings')}><Settings size={17}/>{tr(lang, 'Settings')}</button>
       <button className={page === 'NOC wall' ? 'nav-item active' : 'nav-item'} onClick={() => go('NOC wall')}><MonitorUp size={17}/>{tr(lang, 'NOC wall')}</button>
@@ -172,15 +174,16 @@ export default function App() {
         {!membership ? <div className="panel access-panel"><div className="empty-icon"><LockKeyhole size={23}/></div><h2>No workspace access yet</h2><p>Your account is signed in, but it has not been added to an organization. Ask the system owner to assign your account.</p></div> : <>
           <Flash kind="error" msg={dataError ? 'Could not load workspace data: ' + dataError : ''}/>
           {dataLoading && <Skeleton rows={3}/>}
-          {page === 'Overview' && <Overview devices={devices} sites={sites} networks={networks} online={online} loading={dataLoading} go={go} organizationId={membership.organization_id} prefs={prefs} setPrefs={setPrefs}/>}
-          {page === 'Devices' && <DevicesPage devices={devices} archivedDevices={archivedDevices} loading={dataLoading} organizationId={membership.organization_id} role={membership.role} accessToken={session.access_token} onRefresh={refresh} sites={sites}/>}
-          {page === 'Topology' && <TopologyPage sites={sites} networks={networks} devices={devices}/>}
+          {page === 'Overview' && <Overview devices={nonEsxiDevices} sites={sites} networks={networks} online={online} loading={dataLoading} go={go} organizationId={membership.organization_id} prefs={prefs} setPrefs={setPrefs}/>}
+          {page === 'Devices' && <DevicesPage devices={nonEsxiDevices} archivedDevices={archivedDevices} loading={dataLoading} organizationId={membership.organization_id} role={membership.role} accessToken={session.access_token} onRefresh={refresh} sites={sites}/>}
+          {page === 'Topology' && <TopologyPage sites={sites} networks={networks} devices={nonEsxiDevices}/>}
+          {page === 'Virtualization' && <VirtualizationPage devices={devices} sites={sites} organizationId={membership.organization_id} accessToken={session.access_token} role={membership.role}/>}
           {page === 'Traffic' && <TrafficPage organizationId={membership.organization_id}/>}
           {page === 'Alerts' && <AlertsPage organizationId={membership.organization_id} role={membership.role}/>}
-          {page === 'Logs' && <LogsPage organizationId={membership.organization_id} devices={devices}/>}
+          {page === 'Logs' && <LogsPage organizationId={membership.organization_id} devices={nonEsxiDevices}/>}
           {page === 'Uptime' && <UptimePage organizationId={membership.organization_id} role={membership.role} token={session.access_token} sites={sites}/>}
           {page === 'Reports' && <ReportsPage organizationId={membership.organization_id} token={session.access_token}/>}
-          {page === 'NOC wall' && <NocWall devices={devices} organizationId={membership.organization_id} embedded onPresent={() => setNoc(true)}/>}
+          {page === 'NOC wall' && <NocWall devices={nonEsxiDevices} organizationId={membership.organization_id} embedded onPresent={() => setNoc(true)}/>}
           {page === 'Audit log' && <AuditPage organizationId={membership.organization_id}/>}
           {page === 'Platform' && ['owner','admin'].includes(membership.role) && <PlatformPage organizationId={membership.organization_id} token={session.access_token}/>}
           {page === 'Sites & Networks' && <SitesPage key={'t'+pageTab} initialTab={pageTab} sites={sites} networks={networks} organizationId={membership.organization_id} role={membership.role} accessToken={session.access_token} onRefresh={refresh}/>}
@@ -203,7 +206,7 @@ export default function App() {
             <label className="field"><span>Type <b>{orgName}</b> to confirm</span><input autoFocus value={delName} onChange={e => setDelName(e.target.value)} placeholder={orgName}/></label>
             <div className="modal-actions"><button type="button" className="secondary-action" onClick={() => setDelWs(false)} disabled={wsBusy}>Cancel</button><button className="danger-solid" disabled={wsBusy || delName.trim() !== orgName}>{wsBusy ? 'Deleting…' : 'Delete workspace'}</button></div>
           </form></div></div>}
-        {noc && membership && <NocWall devices={devices} organizationId={membership.organization_id} onClose={() => setNoc(false)}/>}
+        {noc && membership && <NocWall devices={nonEsxiDevices} organizationId={membership.organization_id} onClose={() => setNoc(false)}/>}
         <div className="footer"><span>ELITE NETWORK INTELLIGENCE <b>v0.4.0</b></span><span>Secure workspace · {membership?.role ?? 'No role'}</span></div>
       </section>
     </main>

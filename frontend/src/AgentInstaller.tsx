@@ -1,11 +1,10 @@
 import { Select } from './ui';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Check, Copy, Download, Terminal } from 'lucide-react';
-import { api, apiUrl } from './lib';
+import { api, apiUrl, publishedAgentVersion, LATEST_AGENT_VERSION } from './lib';
 
 type Site = { id: string; name: string };
 type OS = 'windows' | 'linux' | 'macos';
-const RELEASE = 'https://github.com/elite-tech240/elite-network-intelligence/releases/latest/download/EliteNetworkAgent-Setup.exe';
 const SCRIPT = 'https://raw.githubusercontent.com/elite-tech240/elite-network-intelligence/main/agent/install.sh';
 const q = (v: string) => `'${v.replace(/'/g, `'\\''`)}'`;
 
@@ -20,7 +19,10 @@ export function AgentInstaller({ sites, organizationId, accessToken, canManage }
   const [site, setSite] = useState(sites[0]?.id ?? '');
   const [token, setToken] = useState(''); const [expires, setExpires] = useState('');
   const [os, setOs] = useState<OS>('windows'); const [busy, setBusy] = useState(false); const [error, setError] = useState('');
+  const [agentVersion, setAgentVersion] = useState(LATEST_AGENT_VERSION);
   const siteId = site || sites[0]?.id || '';
+  useEffect(() => { let on = true; publishedAgentVersion().then(v => { if (on) setAgentVersion(v); }); return () => { on = false; }; }, []);
+  const release = `https://github.com/elite-tech240/elite-network-intelligence/releases/download/agent-installer-v${agentVersion}/EliteNetworkAgent-Setup-${agentVersion}.exe`;
 
   const generate = async () => {
     if (!siteId) { setError('Create a site first.'); return; }
@@ -55,7 +57,7 @@ export function AgentInstaller({ sites, organizationId, accessToken, canManage }
 
       {!token && <p className="muted">Generate a token in step 1 to see the install instructions.</p>}
       {token && os === 'windows' && <div className="os-panel">
-        <a className="primary-action installer-download" href={RELEASE} target="_blank" rel="noreferrer"><Download size={15}/> Download Windows installer (.exe)</a>
+        <a className="primary-action installer-download" href={release} target="_blank" rel="noreferrer"><Download size={15}/> Download Windows installer (.exe)</a>
         <p className="muted">Run it as administrator, then paste these two values when asked:</p>
         <div className="kv"><span>Enrollment token</span><code>{token}</code><CopyButton text={token}/></div>
         <div className="kv"><span>Site ID</span><code>{siteId}</code><CopyButton text={siteId}/></div>
