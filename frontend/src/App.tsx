@@ -6,7 +6,7 @@ type Device = { id: string; hostname: string; ip_address: string | null; status:
 type Site = { id: string; name: string; location: string | null };
 type Net = { id: string; name: string; cidr: string | null; site_id: string };
 type Membership = { organization_id: string; role: 'owner' | 'admin' | 'operator' | 'viewer'; organizations?: { id: string; name: string }[] | null };
-import { supabase, configured, apiUrl, fmtBps, LATEST_AGENT_VERSION, SELF_UPDATE_FROM, versionAtLeast, publishedAgentVersion, pendingAuthAction } from './lib';
+import { supabase, configured, apiUrl, api, fmtBps, LATEST_AGENT_VERSION, SELF_UPDATE_FROM, versionAtLeast, publishedAgentVersion, pendingAuthAction } from './lib';
 import { AgentInstaller } from './AgentInstaller';
 import { Toaster, ConfirmHost, Flash, confirmDialog, toast, usePrefs, tr, CommandPalette, Drawer, Skeleton, EmptyState, useTable, Th, Pager, Checklist, Select, Counter, Modal, type Command, type Prefs } from './ui';
 import { LineChart, type Point } from './Chart';
