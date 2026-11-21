@@ -20,6 +20,12 @@ const nav = [
   { label: 'Audit log', icon: ClipboardList, path: '/audit' }, { label: 'Sites & Networks', icon: Cable, path: '/sites' },
 ];
 const adminNav = { label: 'Platform', icon: Gauge, path: '/platform' };
+const NAV_GROUPS = [
+  { id: 'monitor', label: 'Monitor', items: ['Overview','Devices','Topology','Virtualization','Traffic','Alerts','Logs','Uptime'] },
+  { id: 'insights', label: 'Insights', items: ['Reports','Audit log'] },
+  { id: 'manage', label: 'Manage', items: ['Sites & Networks','Platform','Settings','NOC wall','Documentation'] },
+];
+const NAV_DESC: Record<string, string> = { Overview: 'Live map and health at a glance', Devices: 'Every endpoint and its status', Topology: 'Sites, networks and connections', Virtualization: 'ESXi hosts and their VMs', Traffic: 'Throughput by device', Alerts: 'Open incidents and alert rules', Logs: 'Warnings, errors and sign-ins', Uptime: 'Websites and ports', Reports: 'Availability and incident summaries', 'Audit log': 'Who changed what, and when', 'Sites & Networks': 'Places, IP ranges and agent installer', Platform: 'Health of the monitoring service', Settings: 'Account, team and notifications', 'NOC wall': 'Full-screen view for a wall display', Documentation: 'Guides and setup docs' };
 const pageFromPath = () => [...nav, adminNav].find(n => n.path === window.location.pathname)?.label ?? (window.location.pathname === '/settings' ? 'Settings' : 'Overview');
 
 export default function App() {
@@ -69,8 +75,8 @@ export default function App() {
   const [palette, setPalette] = useState(false);
   const lang = prefs.lang;
   const [wsOpen, setWsOpen] = useState(false); const wsRef = useRef<HTMLDivElement>(null);
-  const [moreOpen, setMoreOpen] = useState(false); const moreRef = useRef<HTMLDivElement>(null);
-  useEffect(() => { if (!moreOpen) return; const off = (e: MouseEvent) => { if (!moreRef.current?.contains(e.target as Node)) setMoreOpen(false); }; document.addEventListener('mousedown', off); return () => document.removeEventListener('mousedown', off); }, [moreOpen]);
+  const [navGroup, setNavGroup] = useState(''); const navRef = useRef<HTMLDivElement>(null);
+  useEffect(() => { if (!navGroup) return; const off = (e: MouseEvent) => { if (!navRef.current?.contains(e.target as Node)) setNavGroup(''); }; const esc = (e: KeyboardEvent) => { if (e.key === 'Escape') setNavGroup(''); }; document.addEventListener('mousedown', off); document.addEventListener('keydown', esc); return () => { document.removeEventListener('mousedown', off); document.removeEventListener('keydown', esc); }; }, [navGroup]);
   useEffect(() => { if (!wsOpen) return; const off = (e: MouseEvent) => { if (!wsRef.current?.contains(e.target as Node)) setWsOpen(false); }; document.addEventListener('mousedown', off); return () => document.removeEventListener('mousedown', off); }, [wsOpen]);
   const [bellOpen, setBellOpen] = useState(false); const bellRef = useRef<HTMLDivElement>(null);
   useEffect(() => { if (!bellOpen) return; const off = (e: MouseEvent) => { if (!bellRef.current?.contains(e.target as Node)) setBellOpen(false); }; document.addEventListener('mousedown', off); return () => document.removeEventListener('mousedown', off); }, [bellOpen]);
@@ -176,6 +182,7 @@ export default function App() {
   const signOut = async () => { if (!(await confirmDialog('You will need to sign in again to access your workspace.', { title: 'Sign out?', confirmText: 'Sign out', danger: false }))) return; if (supabase) await supabase.auth.signOut(); window.history.replaceState({}, '', '/login'); setPage('Overview'); };
   const refresh = () => { if (session?.user) void loadWorkspace(session.user); };
   const title = tr(lang, page === 'Overview' ? 'Network overview' : page);
+  const onlineCount = devices.filter(d => d.device_type !== 'esxi_host' && d.device_type !== 'esxi_vm' && deviceStatus(d) === 'online').length;
   const nonEsxiDevices = useMemo(() => devices.filter(d => d.device_type !== 'esxi_host' && d.device_type !== 'esxi_vm'), [devices]);
   const commands: Command[] = [
     ...[...nav, adminNav, { label: 'Settings' }].filter(n => n.label !== 'Platform' || (membership && ['owner', 'admin'].includes(membership.role))).map(n => ({ id: 'p-' + n.label, label: tr(lang, n.label), hint: tr(lang, 'Pages'), run: () => go(n.label) })),
@@ -201,16 +208,20 @@ export default function App() {
           <div className="ws-sep"/>
           <button role="menuitem" className="ws-item" onClick={() => { setWsOpen(false); setNewWs(true); }}><Plus size={16}/><span><b>Create workspace</b><small>Start a separate, empty environment</small></span></button>
           </div>}</div>
-      <nav className="tn-tabs" aria-label="Primary">{nav.filter(i => ['Overview','Devices','Topology','Virtualization','Traffic','Alerts','Logs','Uptime'].includes(i.label)).map(item => <button key={item.label} className={page === item.label ? 'tn-tab on' : 'tn-tab'} aria-current={page === item.label ? 'page' : undefined} aria-label={tr(lang, item.label)} title={tr(lang, item.label)} onClick={() => go(item.label)}><item.icon size={16}/><span>{tr(lang, item.label)}</span>{item.label === 'Alerts' && openAlerts > 0 && <i className="nav-dot"/>}</button>)}
-        <div className="tn-more" ref={moreRef}><button className={['Reports','Audit log','Sites & Networks','Platform','Settings','NOC wall'].includes(page) ? 'tn-tab on' : 'tn-tab'} aria-haspopup="menu" aria-expanded={moreOpen} onClick={() => setMoreOpen(o => !o)}><MoreHorizontal size={16}/><span>{tr(lang, 'More')}</span><ChevronDown size={14}/></button>
-          {moreOpen && <div className="tn-menu" role="menu">
-            {[['INSIGHTS', ['Reports','Audit log']], ['MANAGE', ['Sites & Networks', ...(membership && ['owner','admin'].includes(membership.role) ? ['Platform'] : [])]]].map(([group, labels]) => <div key={group as string}><div className="ws-menu-label">{tr(lang, group as string)}</div>{[...nav, adminNav].filter(i => (labels as string[]).includes(i.label)).map(item => <button key={item.label} role="menuitem" className={page === item.label ? 'ws-item sel' : 'ws-item'} onClick={() => { setMoreOpen(false); go(item.label); }}><item.icon size={16}/><span><b>{tr(lang, item.label)}</b></span></button>)}</div>)}
-            <div className="ws-sep"/>
-            <button role="menuitem" className={page === 'Settings' ? 'ws-item sel' : 'ws-item'} onClick={() => { setMoreOpen(false); go('Settings'); }}><Settings size={16}/><span><b>{tr(lang, 'Settings')}</b></span></button>
-            <button role="menuitem" className={page === 'NOC wall' ? 'ws-item sel' : 'ws-item'} onClick={() => { setMoreOpen(false); go('NOC wall'); }}><MonitorUp size={16}/><span><b>{tr(lang, 'NOC wall')}</b></span></button>
-            <a role="menuitem" className="ws-item" href="https://github.com/elite-tech240/elite-network-intelligence/tree/main/docs" target="_blank" rel="noreferrer"><CircleHelp size={16}/><span><b>{tr(lang, 'Documentation')}</b></span></a>
-          </div>}</div>
+      <nav className="tn-groups" aria-label="Primary" ref={navRef}>
+        {NAV_GROUPS.map(g => { const items = g.items.filter(l => l !== 'Platform' || (membership && ['owner','admin'].includes(membership.role))); const active = items.includes(page); return <div key={g.id} className="tn-group">
+          <button className={`tn-gbtn${navGroup === g.id ? ' open' : ''}${active ? ' active' : ''}`} aria-haspopup="menu" aria-expanded={navGroup === g.id} onClick={() => setNavGroup(o => o === g.id ? '' : g.id)}>{tr(lang, g.label)}<ChevronDown size={14}/>{g.id === 'monitor' && openAlerts > 0 && <i className="nav-dot"/>}</button>
+          {navGroup === g.id && <div className={`tn-mega${g.id === 'monitor' ? ' wide' : ''}`} role="menu">
+            <div className="tn-mega-grid">{items.map(label => { const item = [...nav, adminNav].find(n => n.label === label); const Icon = item?.icon ?? (label === 'Settings' ? Settings : label === 'NOC wall' ? MonitorUp : CircleHelp); const body = <><span className="tn-mi-ic"><Icon size={18}/></span><span><b>{tr(lang, label)}{label === 'Alerts' && openAlerts > 0 && <em>{openAlerts}</em>}</b><small>{NAV_DESC[label]}</small></span></>;
+              return label === 'Documentation' ? <a key={label} role="menuitem" className="tn-mi" href="https://github.com/elite-tech240/elite-network-intelligence/tree/main/docs" target="_blank" rel="noreferrer" onClick={() => setNavGroup('')}>{body}</a> : <button key={label} role="menuitem" className={page === label ? 'tn-mi on' : 'tn-mi'} aria-current={page === label ? 'page' : undefined} onClick={() => { setNavGroup(''); go(label); }}>{body}</button>; })}</div>
+            {g.id === 'monitor' && <div className={openAlerts > 0 ? 'tn-live warn' : 'tn-live'}><p><span className="lv-live"/>{openAlerts > 0 ? 'NEEDS ATTENTION' : 'LIVE NOW'}</p>
+              {openAlerts > 0 && recentAlerts[0] ? <><h4>{recentAlerts[0].title}</h4><span>{openAlerts} open alert{openAlerts === 1 ? '' : 's'} · {new Date(recentAlerts[0].triggered_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span><button className="text-button" onClick={() => { setNavGroup(''); go('Alerts'); }}>Open alerts →</button></>
+               : <><h4>{onlineCount} of {nonEsxiDevices.length} devices online</h4><span>{openAlerts > 0 ? `${openAlerts} open alert${openAlerts === 1 ? '' : 's'}` : 'No open alerts right now.'}</span><button className="text-button" onClick={() => { setNavGroup(''); go('Overview'); }}>Open live map →</button></>}</div>}
+          </div>}
+        </div>; })}
+        <span className="tn-here">{tr(lang, "You're on")} <b>{tr(lang, page)}</b></span>
       </nav>
+      <button className="tn-search-field" onClick={() => setPalette(true)} aria-label="Search or jump to (Ctrl K)"><Search size={15}/><span>{tr(lang, 'Search or jump to…')}</span><kbd>Ctrl K</kbd></button>
       <div className="top-actions"><button className="icon-btn tn-search" onClick={() => setPalette(true)} aria-label="Search or jump to (Ctrl K)" title="Search · Ctrl K"><Search size={18}/></button><button className="icon-btn" aria-label="Toggle theme" title="Theme" onClick={() => setPrefs({ theme: prefs.theme === 'dark' ? 'light' : 'dark' })}>{prefs.theme === 'dark' ? <Sun size={18}/> : <Moon size={18}/>}</button><button className="icon-btn" aria-label="Language" title="العربية / English" onClick={() => setPrefs({ lang: prefs.lang === 'en' ? 'ar' : 'en' })}><Languages size={18}/></button><div className="bell-wrap" ref={bellRef}><button className="icon-btn" aria-label="Alerts" aria-haspopup="menu" aria-expanded={bellOpen} onClick={() => setBellOpen(o => !o)}><Bell size={18}/>{openAlerts > 0 && <i/>}</button>
         {bellOpen && <div className="bell-menu" role="menu"><div className="bell-menu-head"><b>Alerts</b><span className="muted">{openAlerts} open</span></div>
           {recentAlerts.length ? recentAlerts.map(a => <button key={a.id} role="menuitem" className="bell-item" onClick={() => { setBellOpen(false); go('Alerts'); }}><span className={`bell-sev ${a.severity}`}/><span><b>{a.title}</b><small>{new Date(a.triggered_at).toLocaleString()}</small></span></button>) : <p className="bell-empty">Nothing open right now.</p>}
