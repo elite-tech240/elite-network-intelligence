@@ -1242,3 +1242,7 @@ th{background:rgba(255,255,255,.025)!important}
 @media(max-width:650px){.fx-floor{opacity:.45}.fx-beam{top:-420px}}
 .fx-beam{top:-300px;height:760px;background:conic-gradient(from 180deg at 50% 0%,transparent 128deg,rgba(245,99,15,.42) 162deg,rgba(255,205,160,.22) 180deg,rgba(245,99,15,.42) 198deg,transparent 232deg);filter:blur(38px)}
 .fx-beam::after{content:"";position:absolute;left:50%;top:300px;width:520px;height:160px;transform:translateX(-50%);border-radius:50%;background:radial-gradient(ellipse,rgba(255,154,92,.22),transparent 70%);filter:blur(20px)}
+/* v2.4 — grid floor in quiet grey, close to the background */
+.fx-floor{background-image:linear-gradient(rgba(255,255,255,.055) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.055) 1px,transparent 1px)!important;opacity:1!important}
+.fx-horizon{background:linear-gradient(90deg,transparent,rgba(255,255,255,.14),transparent)!important;box-shadow:0 0 30px 6px rgba(255,255,255,.03)!important}
+@media(max-width:650px){.fx-floor{opacity:.7!important}}
