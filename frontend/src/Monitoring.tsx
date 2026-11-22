@@ -2,7 +2,7 @@ import { FormEvent, useCallback, useEffect, useState } from 'react';
 import { supabase, api, fmtBps, fmtUptime, ago, LATEST_AGENT_VERSION, SELF_UPDATE_FROM, versionAtLeast, publishedAgentVersion, type Role } from './lib';
 import { Maximize2 } from 'lucide-react';
 import { LineChart, Sparkline, type Point } from './Chart';
-import { Flash, confirmDialog, Skeleton, Select, toast, LongText, Modal } from './ui';
+import { Flash, confirmDialog, Skeleton, Select, toast, LongText, Modal, useTable, Th, Pager } from './ui';
 import { Plus } from 'lucide-react';
 
 type Dev = { id: string; hostname: string; agent_version?: string | null };
@@ -31,6 +31,7 @@ export function LogsPage({ organizationId, devices }: { organizationId: string; 
   }, [organizationId, device, level, range, q]);
   useTick(() => { void load(); }, 1000, [load]);
   const name = (id: string) => devices.find(d => d.id === id)?.hostname ?? id.slice(0, 8);
+  const t = useTable(rows, (r, k) => k === 'logged_at' ? new Date(r.logged_at).getTime() : k === 'device' ? name(r.device_id) : (r as any)[k]);
   return <div className="sites-workspace">
     <section className="panel page-panel"><div className="panel-head"><div><h3>Device logs</h3><p>Warnings, errors and failed sign-ins collected read-only from each device (kept 30 days).</p></div></div>
       <div className="filter-bar">
@@ -44,10 +45,10 @@ export function LogsPage({ organizationId, devices }: { organizationId: string; 
         }} disabled={!rows.length}>Export CSV</button>
       </div>
       <Flash kind="error" msg={err}/>
-      <div className="table-wrap"><table><thead><tr><th>TIME</th><th>DEVICE</th><th>LEVEL</th><th>SOURCE</th><th>MESSAGE</th></tr></thead><tbody>
-        {rows.map(r => <tr key={r.id}><td>{new Date(r.logged_at).toLocaleString()}</td><td>{name(r.device_id)}</td><td><Sev level={r.level}/></td><td>{r.source}{r.event_id ? ` · ${r.event_id}` : ''}</td><td className="wrap-cell"><LongText text={r.message}/></td></tr>)}
-        {!rows.length && <Empty cols={5} text="No logs match. Logs appear once an agent v0.4.0+ is installed and reports warnings or errors."/>}
-      </tbody></table></div></section></div>;
+      <div className="table-wrap"><table><thead><tr><Th t={t} k="logged_at">TIME</Th><Th t={t} k="device">DEVICE</Th><Th t={t} k="level">LEVEL</Th><Th t={t} k="source">SOURCE</Th><th>MESSAGE</th></tr></thead><tbody>
+        {t.rows.map(r => <tr key={r.id}><td>{new Date(r.logged_at).toLocaleString()}</td><td>{name(r.device_id)}</td><td><Sev level={r.level}/></td><td>{r.source}{r.event_id ? ` · ${r.event_id}` : ''}</td><td className="wrap-cell"><LongText text={r.message}/></td></tr>)}
+        {!t.rows.length && <Empty cols={5} text="No logs match. Logs appear once an agent v0.4.0+ is installed and reports warnings or errors."/>}
+      </tbody></table></div><Pager t={t}/></section></div>;
 }
 
 /* ---------------------------------------------------------------- Uptime */
@@ -78,16 +79,17 @@ export function UptimePage({ organizationId, role, token, sites }: { organizatio
   const run = async (id: string) => { setBusy(id); setErr(''); try { const r = await api('/uptime-checks/run', token, { method: 'POST', body: { check_id: id } }); setMsg(r.status === 'up' ? `Up · ${r.latency_ms} ms` : `Down · ${r.error}`); void load(); } catch (e) { setErr((e as Error).message); } finally { setBusy(''); } };
   const toggle = async (c: any) => { await supabase?.from('uptime_checks').update({ enabled: !c.enabled }).eq('id', c.id); void load(); };
   const del = async (c: any) => { if (!await confirmDialog(`Delete check "${c.name}"?`)) return; await supabase?.from('uptime_checks').delete().eq('id', c.id); void load(); };
+  const t = useTable(checks, (c, k) => k === 'target' ? c.check_type + ' ' + c.target : k === 'last_checked_at' ? (c.last_checked_at ? new Date(c.last_checked_at).getTime() : 0) : (c as any)[k]);
   return <div className="sites-workspace">
     <Flash kind="success" msg={msg}/><Flash kind="error" msg={err}/>
     <section className="panel page-panel"><div className="panel-head"><div><h3>Uptime checks</h3><p>Availability of websites and services, last 24 hours of latency.</p></div>{isOp(role) && <button className="primary-action" onClick={() => setShowAdd(true)}><Plus size={15}/>Add check</button>}</div>
-      <div className="table-wrap"><table><thead><tr><th>CHECK</th><th>TARGET</th><th>STATUS</th><th>LATENCY (24H)</th><th>LAST RUN</th><th></th></tr></thead><tbody>
-        {checks.map(c => <tr key={c.id}><td><b>{c.name}</b>{!c.enabled && <span className="muted"> · paused</span>}</td><td>{c.check_type.toUpperCase()} {c.target}{c.port ? ':' + c.port : ''}</td>
+      <div className="table-wrap"><table><thead><tr><Th t={t} k="name">CHECK</Th><Th t={t} k="target">TARGET</Th><Th t={t} k="status">STATUS</Th><th>LATENCY (24H)</th><Th t={t} k="last_checked_at">LAST RUN</Th><th></th></tr></thead><tbody>
+        {t.rows.map(c => <tr key={c.id}><td><b>{c.name}</b>{!c.enabled && <span className="muted"> · paused</span>}</td><td>{c.check_type.toUpperCase()} {c.target}{c.port ? ':' + c.port : ''}</td>
           <td><span className={`status-pill ${c.status === 'up' ? 'online' : c.status === 'down' ? 'offline' : 'pending'}`}><i/>{c.status}</span></td>
           <td className="spark-cell"><Sparkline values={spark[c.id] ?? []}/></td><td>{ago(c.last_checked_at)}</td>
           <td>{isOp(role) && <div className="row-actions"><button className="secondary-action" disabled={busy === c.id} onClick={() => run(c.id)}>Run now</button><button className="secondary-action" onClick={() => toggle(c)}>{c.enabled ? 'Pause' : 'Resume'}</button><button className="danger-action" onClick={() => del(c)}>Delete</button></div>}</td></tr>)}
-        {!checks.length && <Empty cols={6} text="No uptime checks yet. Add one to start monitoring a website or service."/>}
-      </tbody></table></div></section>
+        {!t.rows.length && <Empty cols={6} text="No uptime checks yet. Add one to start monitoring a website or service."/>}
+      </tbody></table></div><Pager t={t}/></section>
     {showAdd && <Modal title="Add uptime check" onClose={() => setShowAdd(false)}><form className="asset-form" onSubmit={add}>
       <label>Name<input value={name} onChange={e => setName(e.target.value)} required maxLength={80} placeholder="Company website"/></label>
       <label>Type<Select value={type} onChange={e => { setType(e.target.value); setTarget(urlTypes.includes(e.target.value) ? 'https://' : ''); }}>
@@ -110,13 +112,14 @@ export function UptimePage({ organizationId, role, token, sites }: { organizatio
 export function ReportsPage({ organizationId, token }: { organizationId: string; token: string }) {
   const [days, setDays] = useState(7); const [r, setR] = useState<any>(null); const [err, setErr] = useState(''); const [loading, setLoading] = useState(false);
   useEffect(() => { let on = true; setLoading(true); setErr(''); api(`/reports/summary?organization_id=${organizationId}&days=${days}`, token).then(d => on && setR(d)).catch(e => on && setErr(e.message)).finally(() => on && setLoading(false)); return () => { on = false; }; }, [organizationId, days, token]);
+  const dt = useTable(r?.devices ?? [], (d: any, k) => (d as any)[k]);
   return <div className="sites-workspace report-page">
     <div className="tabs-row no-print"><p className="muted">Availability, usage and incidents for the selected period.</p><div className="sites-actions"><Select className="filter-select" value={days} onChange={e => setDays(Number(e.target.value))}><option value={7}>Last 7 days</option><option value={30}>Last 30 days</option><option value={90}>Last 90 days</option></Select><button className="primary-action" onClick={() => window.print()} disabled={!r}>Print / Save as PDF</button></div></div>
     <Flash kind="error" msg={err}/>{loading && <Skeleton rows={4}/>}
     {r && <>
-      <section className="panel page-panel"><div className="panel-head"><div><h3>Devices</h3><p>{r.period.from.slice(0, 10)} → {r.period.to.slice(0, 10)}</p></div></div><div className="table-wrap"><table><thead><tr><th>DEVICE</th><th>AVAILABILITY</th><th>CPU AVG</th><th>MEMORY AVG</th><th>DISK MAX</th><th>AVG DOWNLOAD</th><th>AVG UPLOAD</th></tr></thead><tbody>
-        {r.devices.map((d: any) => <tr key={d.id ?? d.hostname}><td><b>{d.hostname}</b></td><td>{d.availability_percent}%</td><td>{d.cpu_avg ?? '—'}%</td><td>{d.memory_avg ?? '—'}%</td><td>{d.disk_max ?? '—'}%</td><td>{fmtBps(d.net_recv_bps_avg)}</td><td>{fmtBps(d.net_sent_bps_avg)}</td></tr>)}
-        {!r.devices.length && <Empty cols={7} text="No devices."/>}</tbody></table></div></section>
+      <section className="panel page-panel"><div className="panel-head"><div><h3>Devices</h3><p>{r.period.from.slice(0, 10)} → {r.period.to.slice(0, 10)}</p></div></div><div className="table-wrap"><table><thead><tr><Th t={dt} k="hostname">DEVICE</Th><Th t={dt} k="availability_percent">AVAILABILITY</Th><Th t={dt} k="cpu_avg">CPU AVG</Th><Th t={dt} k="memory_avg">MEMORY AVG</Th><Th t={dt} k="disk_max">DISK MAX</Th><Th t={dt} k="net_recv_bps_avg">AVG DOWNLOAD</Th><Th t={dt} k="net_sent_bps_avg">AVG UPLOAD</Th></tr></thead><tbody>
+        {dt.rows.map((d: any) => <tr key={d.id ?? d.hostname}><td><b>{d.hostname}</b></td><td>{d.availability_percent}%</td><td>{d.cpu_avg ?? '—'}%</td><td>{d.memory_avg ?? '—'}%</td><td>{d.disk_max ?? '—'}%</td><td>{fmtBps(d.net_recv_bps_avg)}</td><td>{fmtBps(d.net_sent_bps_avg)}</td></tr>)}
+        {!dt.rows.length && <Empty cols={7} text="No devices."/>}</tbody></table></div><Pager t={dt}/></section>
       <div className="two-col">
         <section className="panel page-panel"><div className="panel-head"><div><h3>Alerts</h3><p>{r.alerts.total} in period · {r.alerts.open} open now</p></div></div><div className="table-wrap"><table><tbody>{(r.alerts.top ?? []).map((t: any) => <tr key={t.title}><td className="wrap-cell"><LongText text={t.title}/></td><td><b>{t.count}</b></td></tr>)}{!r.alerts.top?.length && <Empty cols={2} text="No alerts in this period."/>}</tbody></table></div></section>
         <section className="panel page-panel"><div className="panel-head"><div><h3>Uptime checks</h3><p>Websites and services</p></div></div><div className="table-wrap"><table><tbody>{(r.uptime_checks ?? []).map((c: any) => <tr key={c.name}><td>{c.name}</td><td><b>{c.availability_percent ?? '—'}%</b></td><td>{c.avg_latency_ms ? Math.round(c.avg_latency_ms) + ' ms' : ''}</td></tr>)}{!r.uptime_checks?.length && <Empty cols={3} text="No uptime checks."/>}</tbody></table></div></section>
@@ -130,10 +133,11 @@ export function AuditPage({ organizationId }: { organizationId: string }) {
   const [rows, setRows] = useState<any[]>([]); const [action, setAction] = useState('all');
   const load = useCallback(async () => { if (!supabase) return; let q = supabase.from('audit_logs').select('id,actor_type,actor_user_id,action,resource_type,resource_id,outcome,details,occurred_at').eq('organization_id', organizationId).order('occurred_at', { ascending: false }).limit(200); if (action !== 'all') q = q.eq('resource_type', action); const { data } = await q; setRows(data ?? []); }, [organizationId, action]);
   useTick(() => void load(), 20000, [load]);
+  const t = useTable(rows, (r, k) => k === 'occurred_at' ? new Date(r.occurred_at).getTime() : k === 'actor' ? (r.actor_type + (r.actor_user_id ? ' ' + r.actor_user_id : '')) : (r as any)[k]);
   return <div className="sites-workspace"><section className="panel page-panel"><div className="panel-head"><div><h3>Audit log</h3><p>Who changed what. Entries cannot be edited.</p></div><Select className="filter-select" value={action} onChange={e => setAction(e.target.value)}><option value="all">Everything</option><option value="device">Devices</option><option value="enrollment_token">Enrollment tokens</option><option value="alert_rules">Alert rules</option><option value="uptime_checks">Uptime checks</option><option value="notification_channels">Notification channels</option><option value="organization_member">Team</option></Select></div>
-    <div className="table-wrap"><table><thead><tr><th>WHEN</th><th>ACTOR</th><th>ACTION</th><th>RESOURCE</th><th>RESULT</th><th>DETAILS</th></tr></thead><tbody>
-      {rows.map(r => <tr key={r.id}><td>{new Date(r.occurred_at).toLocaleString()}</td><td>{r.actor_type}{r.actor_user_id ? ' · ' + String(r.actor_user_id).slice(0, 8) : ''}</td><td><b>{r.action}</b></td><td>{r.resource_type}</td><td>{r.outcome}</td><td className="wrap-cell muted">{r.details && Object.keys(r.details).length ? JSON.stringify(r.details).slice(0, 140) : ''}</td></tr>)}
-      {!rows.length && <Empty cols={6} text="No audit entries yet."/>}</tbody></table></div></section></div>;
+    <div className="table-wrap"><table><thead><tr><Th t={t} k="occurred_at">WHEN</Th><Th t={t} k="actor">ACTOR</Th><Th t={t} k="action">ACTION</Th><Th t={t} k="resource_type">RESOURCE</Th><Th t={t} k="outcome">RESULT</Th><th>DETAILS</th></tr></thead><tbody>
+      {t.rows.map(r => <tr key={r.id}><td>{new Date(r.occurred_at).toLocaleString()}</td><td>{r.actor_type}{r.actor_user_id ? ' · ' + String(r.actor_user_id).slice(0, 8) : ''}</td><td><b>{r.action}</b></td><td>{r.resource_type}</td><td>{r.outcome}</td><td className="wrap-cell muted">{r.details && Object.keys(r.details).length ? JSON.stringify(r.details).slice(0, 140) : ''}</td></tr>)}
+      {!t.rows.length && <Empty cols={6} text="No audit entries yet."/>}</tbody></table></div><Pager t={t}/></section></div>;
 }
 
 /* -------------------------------------------------------------- Platform */
@@ -143,6 +147,7 @@ export function PlatformPage({ organizationId, token }: { organizationId: string
   const tick = s?.last_tick; const tickAge = tick?.updated_at ? (Date.now() - new Date(tick.updated_at).getTime()) / 1000 : null;
   const healthy = tickAge != null && tickAge < 180;
   const Row = ({ k, v, ok }: { k: string; v: React.ReactNode; ok?: boolean }) => <div className="setting-row"><span>{k}</span><b className={ok === undefined ? '' : ok ? 'txt-good' : 'txt-bad'}>{v}</b></div>;
+  const et = useTable(s?.events ?? [], (e: any, k) => k === 'created_at' ? new Date(e.created_at).getTime() : (e as any)[k]);
   return <div className="sites-workspace"><Flash kind="error" msg={err}/>
     {s && <div className="two-col">
       <section className="panel settings-card"><h3>Monitoring engine</h3><p>Background jobs run every minute.</p>
@@ -153,7 +158,7 @@ export function PlatformPage({ organizationId, token }: { organizationId: string
         <Row k="Notifications (7 days)" v={`${s.notifications_7d?.sent ?? 0} sent · ${s.notifications_7d?.failed ?? 0} failed · ${s.notifications_7d?.skipped ?? 0} skipped`}/>
         {s.database_size_mb != null && <Row k="Database size" v={Number(s.database_size_mb).toFixed(1) + ' MB'}/>}
         {s.tables && Object.entries(s.tables).map(([k, v]) => <Row key={k} k={`Rows · ${k}`} v={Number(v).toLocaleString()}/>)}</section></div>}
-    {s && <section className="panel page-panel"><div className="panel-head"><div><h3>Platform events</h3><p>Errors raised by the monitoring service itself.</p></div></div><div className="table-wrap"><table><thead><tr><th>TIME</th><th>LEVEL</th><th>SOURCE</th><th>MESSAGE</th></tr></thead><tbody>{(s.events ?? []).map((e: any) => <tr key={e.id}><td>{new Date(e.created_at).toLocaleString()}</td><td><Sev level={e.level === 'error' ? 'error' : e.level}/></td><td>{e.source}</td><td className="wrap-cell"><LongText text={e.message}/></td></tr>)}{!s.events?.length && <Empty cols={4} text="No platform errors. All good."/>}</tbody></table></div></section>}
+    {s && <section className="panel page-panel"><div className="panel-head"><div><h3>Platform events</h3><p>Errors raised by the monitoring service itself.</p></div></div><div className="table-wrap"><table><thead><tr><Th t={et} k="created_at">TIME</Th><Th t={et} k="level">LEVEL</Th><Th t={et} k="source">SOURCE</Th><th>MESSAGE</th></tr></thead><tbody>{et.rows.map((e: any) => <tr key={e.id}><td>{new Date(e.created_at).toLocaleString()}</td><td><Sev level={e.level === 'error' ? 'error' : e.level}/></td><td>{e.source}</td><td className="wrap-cell"><LongText text={e.message}/></td></tr>)}{!et.rows.length && <Empty cols={4} text="No platform errors. All good."/>}</tbody></table></div><Pager t={et}/></section>}
   </div>;
 }
 
@@ -169,11 +174,12 @@ export function ChannelsPanel({ organizationId, role, token }: { organizationId:
   const del = async (id: string) => { if (await confirmDialog('Delete this channel?')) { await supabase?.from('notification_channels').delete().eq('id', id); void load(); } };
   const flip = async (c: any) => { await supabase?.from('notification_channels').update({ enabled: !c.enabled }).eq('id', c.id); void load(); };
   const shown = (c: any) => c.channel_type === 'email' ? c.config?.to : c.channel_type === 'telegram' ? 'chat ' + c.config?.chat_id : (() => { try { return new URL(c.config?.url).host; } catch { return 'webhook'; } })();
+  const t = useTable(rows, (c, k) => k === 'destination' ? shown(c) : k === 'channel_type' ? c.channel_type : (c as any)[k]);
   return <div className="sites-workspace"><Flash kind="success" msg={msg}/><Flash kind="error" msg={err}/>
     <section className="panel page-panel"><div className="panel-head"><div><h3>Notification channels</h3><p>Where alerts get sent.</p></div><button className="primary-action" onClick={() => setShowAdd(true)}><Plus size={15}/>Add channel</button></div>
-      <div className="table-wrap"><table><thead><tr><th>CHANNEL</th><th>TYPE</th><th>DESTINATION</th><th>MIN. SEVERITY</th><th></th></tr></thead><tbody>
-      {rows.map(c => <tr key={c.id}><td><b>{c.name}</b>{!c.enabled && <span className="muted"> · off</span>}</td><td>{c.channel_type}</td><td>{shown(c)}</td><td>{c.min_severity}</td><td><div className="row-actions"><button className="secondary-action" disabled={busy === c.id} onClick={() => test(c.id)}>Send test</button><button className="secondary-action" onClick={() => flip(c)}>{c.enabled ? 'Turn off' : 'Turn on'}</button><button className="danger-action" onClick={() => del(c.id)}>Delete</button></div></td></tr>)}
-      {!rows.length && <Empty cols={5} text="No channels yet. Without one, alerts only appear in the dashboard."/>}</tbody></table></div></section>
+      <div className="table-wrap"><table><thead><tr><Th t={t} k="name">CHANNEL</Th><Th t={t} k="channel_type">TYPE</Th><Th t={t} k="destination">DESTINATION</Th><Th t={t} k="min_severity">MIN. SEVERITY</Th><th></th></tr></thead><tbody>
+      {t.rows.map(c => <tr key={c.id}><td><b>{c.name}</b>{!c.enabled && <span className="muted"> · off</span>}</td><td>{c.channel_type}</td><td>{shown(c)}</td><td>{c.min_severity}</td><td><div className="row-actions"><button className="secondary-action" disabled={busy === c.id} onClick={() => test(c.id)}>Send test</button><button className="secondary-action" onClick={() => flip(c)}>{c.enabled ? 'Turn off' : 'Turn on'}</button><button className="danger-action" onClick={() => del(c.id)}>Delete</button></div></td></tr>)}
+      {!t.rows.length && <Empty cols={5} text="No channels yet. Without one, alerts only appear in the dashboard."/>}</tbody></table></div><Pager t={t}/></section>
     <section className="panel page-panel"><div className="panel-head"><div><h3>Recent deliveries</h3></div></div><div className="table-wrap"><table><tbody>{deliveries.map(d => <tr key={d.id}><td>{new Date(d.created_at).toLocaleString()}</td><td>{d.kind}</td><td><span className={`status-pill ${d.status === 'sent' ? 'online' : d.status === 'failed' ? 'offline' : 'pending'}`}><i/>{d.status}</span></td><td className="wrap-cell muted"><LongText text={d.detail}/></td></tr>)}{!deliveries.length && <Empty cols={4} text="Nothing sent yet."/>}</tbody></table></div></section>
     {showAdd && <Modal title="Add notification channel" onClose={() => setShowAdd(false)}><form className="asset-form" onSubmit={add}>
       <label>Name<input value={name} onChange={e => setName(e.target.value)} required maxLength={60} placeholder="IT team"/></label>
@@ -193,9 +199,10 @@ export function MaintenancePanel({ organizationId, role }: { organizationId: str
   const start = async (e: FormEvent) => { e.preventDefault(); if (!supabase) return; setErr(''); const now = Date.now(); const { error } = await supabase.from('maintenance_windows').insert({ organization_id: organizationId, name: name.trim(), starts_at: new Date(now - 1000).toISOString(), ends_at: new Date(now + Number(mins) * 60000).toISOString() }); if (error) setErr(error.message); else { setShowAdd(false); void load(); } };
   const end = async (id: string) => { await supabase?.from('maintenance_windows').update({ ends_at: new Date().toISOString() }).eq('id', id); void load(); };
   const active = (w: any) => new Date(w.starts_at).getTime() <= Date.now() && new Date(w.ends_at).getTime() >= Date.now();
+  const t = useTable(rows, (w, k) => (k === 'starts_at' || k === 'ends_at') ? new Date((w as any)[k]).getTime() : (w as any)[k]);
   return <div className="sites-workspace"><Flash kind="error" msg={err}/>
     <section className="panel page-panel"><div className="panel-head"><div><h3>Maintenance windows</h3><p>Pause alerts and notifications during planned work.</p></div>{isOp(role) && <button className="primary-action" onClick={() => setShowAdd(true)}><Plus size={15}/>Start window</button>}</div>
-      <div className="table-wrap"><table><thead><tr><th>WINDOW</th><th>FROM</th><th>UNTIL</th><th></th></tr></thead><tbody>{rows.map(w => <tr key={w.id}><td><b>{w.name}</b> {active(w) && <span className="status-pill pending"><i/>active</span>}</td><td>{new Date(w.starts_at).toLocaleString()}</td><td>{new Date(w.ends_at).toLocaleString()}</td><td>{isOp(role) && active(w) && <button className="secondary-action" onClick={() => end(w.id)}>End now</button>}</td></tr>)}{!rows.length && <Empty cols={4} text="No maintenance windows."/>}</tbody></table></div></section>
+      <div className="table-wrap"><table><thead><tr><Th t={t} k="name">WINDOW</Th><Th t={t} k="starts_at">FROM</Th><Th t={t} k="ends_at">UNTIL</Th><th></th></tr></thead><tbody>{t.rows.map(w => <tr key={w.id}><td><b>{w.name}</b> {active(w) && <span className="status-pill pending"><i/>active</span>}</td><td>{new Date(w.starts_at).toLocaleString()}</td><td>{new Date(w.ends_at).toLocaleString()}</td><td>{isOp(role) && active(w) && <button className="secondary-action" onClick={() => end(w.id)}>End now</button>}</td></tr>)}{!t.rows.length && <Empty cols={4} text="No maintenance windows."/>}</tbody></table></div><Pager t={t}/></section>
     {showAdd && <Modal title="Start a maintenance window" onClose={() => setShowAdd(false)}><form className="asset-form" onSubmit={start}>
       <label>Reason<input value={name} onChange={e => setName(e.target.value)} required maxLength={80}/></label>
       <label>For<Select value={mins} onChange={e => setMins(e.target.value)}><option value="30">30 minutes</option><option value="60">1 hour</option><option value="240">4 hours</option><option value="720">12 hours</option></Select></label>
@@ -211,11 +218,12 @@ export function DiscoveryPanel({ organizationId, role, sites }: { organizationId
   useTick(() => void load(), 30000, [load]);
   const set = async (id: string, state: string) => { await supabase?.from('discovered_hosts').update({ state }).eq('id', id); void load(); };
   const list = rows.filter(r => show === 'all' || r.state === show);
+  const t = useTable(list, (r, k) => k === 'site' ? (sites.find(s => s.id === r.site_id)?.name ?? '') : (k === 'first_seen_at' || k === 'last_seen_at') ? new Date((r as any)[k]).getTime() : (r as any)[k]);
   return <section className="panel page-panel"><div className="panel-head"><div><h3>Discovered on your network</h3><p>Read from each agent's ARP table — nothing is scanned or probed. The first report from a site is treated as the baseline.</p></div><Select className="filter-select" value={show} onChange={e => setShow(e.target.value)}><option value="new">New</option><option value="known">Known</option><option value="ignored">Ignored</option><option value="all">All</option></Select></div>
-    <div className="table-wrap"><table><thead><tr><th>IP</th><th>MAC</th><th>SITE</th><th>FIRST SEEN</th><th>LAST SEEN</th><th>STATE</th><th></th></tr></thead><tbody>
-      {list.map(r => <tr key={r.id}><td><b>{r.ip_address}</b></td><td><code>{r.mac_address}</code></td><td>{sites.find(s => s.id === r.site_id)?.name ?? '—'}</td><td>{new Date(r.first_seen_at).toLocaleString()}</td><td>{ago(r.last_seen_at)}</td><td><span className={`status-pill ${r.state === 'new' ? 'pending' : r.state === 'known' ? 'online' : 'offline'}`}><i/>{r.state}</span></td>
+    <div className="table-wrap"><table><thead><tr><Th t={t} k="ip_address">IP</Th><Th t={t} k="mac_address">MAC</Th><Th t={t} k="site">SITE</Th><Th t={t} k="first_seen_at">FIRST SEEN</Th><Th t={t} k="last_seen_at">LAST SEEN</Th><Th t={t} k="state">STATE</Th><th></th></tr></thead><tbody>
+      {t.rows.map(r => <tr key={r.id}><td><b>{r.ip_address}</b></td><td><code>{r.mac_address}</code></td><td>{sites.find(s => s.id === r.site_id)?.name ?? '—'}</td><td>{new Date(r.first_seen_at).toLocaleString()}</td><td>{ago(r.last_seen_at)}</td><td><span className={`status-pill ${r.state === 'new' ? 'pending' : r.state === 'known' ? 'online' : 'offline'}`}><i/>{r.state}</span></td>
         <td>{isOp(role) && <div className="row-actions">{r.state !== 'known' && <button className="secondary-action" onClick={() => set(r.id, 'known')}>Mark known</button>}{r.state !== 'ignored' && <button className="secondary-action" onClick={() => set(r.id, 'ignored')}>Ignore</button>}</div>}</td></tr>)}
-      {!list.length && <Empty cols={7} text="Nothing here. Hosts appear once agents v0.4.0+ report."/>}</tbody></table></div></section>;
+      {!t.rows.length && <Empty cols={7} text="Nothing here. Hosts appear once agents v0.4.0+ report."/>}</tbody></table></div><Pager t={t}/></section>;
 }
 
 /* ----------------------------------------- Device detail (charts + info) */
@@ -275,6 +283,7 @@ export function DeviceDetail({ devices, initialId }: { devices: Dev[]; initialId
     } catch (err: any) { toast(err?.message ?? 'Could not start the update'); }
     finally { setBusy(false); }
   };
+  const pt = useTable(latest?.top_processes ?? [], (p: any, k) => (p as any)[k]);
   if (!devices.length) return <section className="panel empty-panel"><h3>No devices yet</h3><p>Enroll an agent to see charts here.</p></section>;
   return <div className="sites-workspace">
     <div className="filter-bar"><Select className="filter-select" value={id} onChange={e => setId(e.target.value)}>{devices.map(d => <option key={d.id} value={d.id}>{d.hostname}</option>)}</Select>
@@ -296,7 +305,7 @@ export function DeviceDetail({ devices, initialId }: { devices: Dev[]; initialId
       <section className="panel chart-panel"><h3>Network (download)</h3><LineChart points={series('down')} format={fmtBps} color="#22a447"/><h3 className="sub-h">Network (upload)</h3><LineChart points={series('up')} format={fmtBps} color="#b48cff" height={80}/></section>
     </div>
     <div className="two-col">
-      <section className="panel page-panel"><div className="panel-head"><div><h3>Top processes</h3><p>Latest sample · names only</p></div></div><div className="table-wrap"><table><thead><tr><th>PROCESS</th><th>CPU</th><th>MEMORY</th></tr></thead><tbody>{(latest?.top_processes ?? []).map((p: any, i: number) => <tr key={i}><td>{p.name}</td><td>{p.cpu}%</td><td>{p.memory_mb} MB</td></tr>)}{!latest?.top_processes?.length && <Empty cols={3} text="Needs agent v0.4.0+."/>}</tbody></table></div></section>
+      <section className="panel page-panel"><div className="panel-head"><div><h3>Top processes</h3><p>Latest sample · names only</p></div></div><div className="table-wrap"><table><thead><tr><Th t={pt} k="name">PROCESS</Th><Th t={pt} k="cpu">CPU</Th><Th t={pt} k="memory_mb">MEMORY</Th></tr></thead><tbody>{pt.rows.map((p: any, i: number) => <tr key={i}><td>{p.name}</td><td>{p.cpu}%</td><td>{p.memory_mb} MB</td></tr>)}{!pt.rows.length && <Empty cols={3} text="Needs agent v0.4.0+."/>}</tbody></table></div></section>
       <section className="panel page-panel"><div className="panel-head"><div><h3>Recent logs</h3></div></div><div className="table-wrap"><table><tbody>{logs.map(l => <tr key={l.id}><td><Sev level={l.level}/></td><td className="wrap-cell"><LongText text={l.message}/></td><td>{ago(l.logged_at)}</td></tr>)}{!logs.length && <Empty cols={3} text="No warnings or errors."/>}</tbody></table></div></section>
     </div></div>;
 }

@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Server, HardDrive, Copy, Check, ChevronDown, ChevronRight } from 'lucide-react';
 import { api, apiUrl } from './lib';
-import { Select, Drawer, EmptyState, Stepper, SetupCard } from './ui';
+import { Select, Drawer, EmptyState, Stepper, SetupCard, useTable, Th, Pager } from './ui';
 import { DeviceDetail } from './Monitoring';
 
 type Device = { id: string; hostname: string; ip_address: string | null; status: string; device_type: string | null; last_seen_at: string | null; site_id?: string; parent_device_id?: string | null };
@@ -20,6 +20,7 @@ function HostCard({ host, vms, onOpen }: { host: Device; vms: Device[]; onOpen: 
   const [open, setOpen] = useState(true);
   const online = vms.filter(v => deviceStatus(v) === 'online').length;
   const st = deviceStatus(host);
+  const t = useTable(vms, (v,k)=>k==='status'?deviceStatus(v):k==='last_seen_at'?(v.last_seen_at?new Date(v.last_seen_at).getTime():0):(v as any)[k]);
   return <div className="panel esxi-host-card">
     <div className="esxi-host-head">
       <button type="button" className="esxi-toggle" aria-expanded={open} aria-label={open ? 'Collapse VMs' : 'Expand VMs'} onClick={() => setOpen(o => !o)}>
@@ -33,14 +34,14 @@ function HostCard({ host, vms, onOpen }: { host: Device; vms: Device[]; onOpen: 
       <span className={`status-pill ${st === 'online' ? 'online' : st === 'offline' ? 'offline' : 'pending'}`}><i/>{st}</span>
       <span className="esxi-vm-count">{vms.length} VM{vms.length === 1 ? '' : 's'} · {online} running</span>
     </div>
-    {open && (vms.length ? <div className="table-wrap esxi-vm-table"><table><thead><tr><th>VM</th><th>GUEST OS</th><th>STATUS</th><th>LAST SEEN</th></tr></thead><tbody>
-      {vms.map(v => <tr key={v.id} className="row-click" onClick={() => onOpen(v.id)}>
+    {open && (vms.length ? <><div className="table-wrap esxi-vm-table"><table><thead><tr><Th t={t} k="hostname">VM</Th><Th t={t} k="os_name">GUEST OS</Th><Th t={t} k="status">STATUS</Th><Th t={t} k="last_seen_at">LAST SEEN</Th></tr></thead><tbody>
+      {t.rows.map(v => <tr key={v.id} className="row-click" onClick={() => onOpen(v.id)}>
         <td><div className="device-name"><span className="device-icon"><HardDrive size={14}/></span><b>{v.hostname}</b></div></td>
         <td>{(v as any).os_name ?? '—'}</td>
         <td><span className={`status-pill ${deviceStatus(v) === 'online' ? 'online' : deviceStatus(v) === 'offline' ? 'offline' : 'pending'}`}><i/>{deviceStatus(v)}</span></td>
         <td>{v.last_seen_at ? new Date(v.last_seen_at).toLocaleString() : 'Never'}</td>
       </tr>)}
-    </tbody></table></div> : <p className="esxi-empty-vms">{st === 'online' ? 'No VMs reported yet.' : 'No VMs reported yet — the connector for this host is not running.'}</p>)}
+    </tbody></table></div><Pager t={t}/></> : <p className="esxi-empty-vms">{st === 'online' ? 'No VMs reported yet.' : 'No VMs reported yet — the connector for this host is not running.'}</p>)}
   </div>;
 }
 
