@@ -509,7 +509,7 @@ function TeamManagement({organizationId,role,accessToken,currentUserId}:{organiz
   const [editingMember,setEditingMember]=useState<TeamMember|null>(null);
   const [editingRole,setEditingRole]=useState<CustomRole|'new'|null>(null);
   const [inviting,setInviting]=useState(false);
-  const rolesRef = useRef<HTMLElement>(null);
+  const [view,setView]=useState<'members'|'roles'>('members');
   const load = useCallback(async () => {
     setLoading(true); setError('');
     try {
@@ -559,8 +559,9 @@ function TeamManagement({organizationId,role,accessToken,currentUserId}:{organiz
   };
   const countFor = (key: string) => members.filter(m => (m.role === 'custom' ? m.custom_role_id : m.role) === key).length;
   const roleLabel = (m: TeamMember) => m.role === 'custom' ? (m.custom_role_name || 'Custom') : m.role;
-  return <>
-    <section className="panel page-panel team-card">
+  return <div className="sites-workspace">
+    <PageTabs items={[{id:'members',label:`Members (${members.length})`},{id:'roles',label:`Roles & permissions (${4+roles.length})`}]} active={view} onChange={v=>setView(v as 'members'|'roles')}/>
+    {view==='members'&&<section className="panel page-panel team-card">
       <div className="panel-head"><div className="head-with-icon"><span className="head-icon"><Users size={18}/></span><div><h3>Team</h3><p>{loading ? 'Loading…' : `${members.length} member${members.length === 1 ? '' : 's'}`} · Everyone with access to this workspace.</p></div></div>
         <button className="primary-action" onClick={()=>setInviting(true)}><Plus size={16}/>Invite member</button></div>
       <Flash kind="error" msg={error}/>
@@ -575,9 +576,9 @@ function TeamManagement({organizationId,role,accessToken,currentUserId}:{organiz
           </tr>
         ); })}</tbody>
       </table></div><Pager t={mt}/></>}
-    </section>
+    </section>}
 
-    <section className="panel page-panel roles-card" ref={rolesRef}>
+    {view==='roles'&&<section className="panel page-panel roles-card">
       <div className="panel-head"><div className="head-with-icon"><span className="head-icon"><ShieldCheck size={18}/></span><div><h3>Roles &amp; permissions</h3><p>What each role can do. Built-in roles are fixed; custom roles let you choose access per area.</p></div></div>
         <button className="secondary-action" onClick={()=>setEditingRole('new')}><Plus size={16}/>Create role</button></div>
       <div className="roles-grid">
@@ -593,12 +594,12 @@ function TeamManagement({organizationId,role,accessToken,currentUserId}:{organiz
         </article>; })}
         <button className="role-tile add" onClick={()=>setEditingRole('new')}><Plus size={20}/><b>Create a custom role</b><span>Pick exactly what someone can view, create, edit or delete.</span></button>
       </div>
-    </section>
+    </section>}
 
-    {inviting && <InviteModal organizationId={organizationId} accessToken={accessToken} canGrantAdmin={role==='owner'} customRoles={roles} onCreateRole={()=>{ setInviting(false); setEditingRole('new'); }} onDone={async()=>{ setInviting(false); await load(); }} onClose={()=>setInviting(false)}/>}
+    {inviting && <InviteModal organizationId={organizationId} accessToken={accessToken} canGrantAdmin={role==='owner'} customRoles={roles} onCreateRole={()=>{ setInviting(false); setView('roles'); setEditingRole('new'); }} onDone={async()=>{ setInviting(false); await load(); }} onClose={()=>setInviting(false)}/>}
     {editingMember && <PermissionsModal member={editingMember} canGrantAdmin={role==='owner'} busy={busyId===editingMember.user_id} customRoles={roles} onSave={(newRole)=>changeRole(editingMember, newRole)} onClose={()=>setEditingMember(null)}/>}
     {editingRole && <CustomRoleModal role={editingRole==='new'?null:editingRole} busy={!!busyId} onSave={(name,perms)=>saveRole(name, perms, editingRole==='new'?undefined:editingRole.id)} onClose={()=>setEditingRole(null)}/>}
-  </>;
+  </div>;
 }
 // Role picker shared by Invite and Change role: radio cards, built-in first, then custom.
 function RolePicker({value,onChange,canGrantAdmin,customRoles,onCreateRole}:{value:string;onChange:(v:string)=>void;canGrantAdmin:boolean;customRoles:CustomRole[];onCreateRole?:()=>void}) {
