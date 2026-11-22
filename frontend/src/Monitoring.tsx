@@ -1,8 +1,8 @@
 import { FormEvent, useCallback, useEffect, useState } from 'react';
 import { supabase, api, fmtBps, fmtUptime, ago, LATEST_AGENT_VERSION, SELF_UPDATE_FROM, versionAtLeast, publishedAgentVersion, type Role } from './lib';
-import { Maximize2 } from 'lucide-react';
+import { Maximize2, Pencil, Trash2, MessageSquare, Boxes } from 'lucide-react';
 import { LineChart, Sparkline, type Point } from './Chart';
-import { Flash, confirmDialog, Skeleton, Select, toast, LongText, Modal, useTable, Th, Pager } from './ui';
+import { Flash, confirmDialog, Skeleton, Select, toast, LongText, Modal, Drawer, EmptyState, useTable, Th, Pager } from './ui';
 import { Plus } from 'lucide-react';
 
 type Dev = { id: string; hostname: string; agent_version?: string | null };
@@ -343,4 +343,189 @@ export function NocWall({ devices, organizationId, onClose, embedded, onPresent 
     <div className="noc2-body"><section><h2>Devices</h2>{grid}</section>
       <aside><h2>Open alerts</h2>{alertList}</aside></div>
   </div>;
+}
+
+/* ------------------------------------------------------------------ Assets */
+const ASSET_CATEGORIES = [
+  { value: 'laptop', label: 'Laptop' }, { value: 'desktop', label: 'Desktop' }, { value: 'monitor', label: 'Monitor' },
+  { value: 'printer', label: 'Printer' }, { value: 'network_gear', label: 'Network gear' }, { value: 'mobile', label: 'Mobile' },
+  { value: 'server', label: 'Server' }, { value: 'other', label: 'Other' },
+];
+const ASSET_STATUSES = [
+  { value: 'in_stock', label: 'In stock' }, { value: 'in_use', label: 'In use' },
+  { value: 'repair', label: 'In repair' }, { value: 'retired', label: 'Retired' },
+];
+type Asset = { id: string; asset_tag: string; name: string; category: string; status: string; assigned_to: string | null; device_id: string | null; site_id: string | null; location: string | null; vendor: string | null; serial_number: string | null; purchase_date: string | null; warranty_expires: string | null; notes: string | null };
+export function AssetsPage({ organizationId, role, token, devices, sites }: { organizationId: string; role: Role; token: string; devices: Dev[]; sites: { id: string; name: string }[] }) {
+  const [rows, setRows] = useState<Asset[]>([]); const [loading, setLoading] = useState(true); const [err, setErr] = useState('');
+  const [editing, setEditing] = useState<Asset | 'new' | null>(null); const [busy, setBusy] = useState('');
+  const [filter, setFilter] = useState('all');
+  const load = useCallback(async () => {
+    setLoading(true); setErr('');
+    try { const r = await api<{ assets: Asset[] }>(`/assets?organization_id=${organizationId}`, token); setRows(r.assets); }
+    catch (e) { setErr(e instanceof Error ? e.message : 'Could not load assets.'); }
+    finally { setLoading(false); }
+  }, [organizationId, token]);
+  useEffect(() => { void load(); }, [load]);
+  const save = async (values: Partial<Asset>, id?: string) => {
+    setBusy(id || 'new'); setErr('');
+    try {
+      if (id) await api(`/assets/${id}`, token, { method: 'PUT', body: { organization_id: organizationId, ...values } });
+      else await api('/assets', token, { method: 'POST', body: { organization_id: organizationId, ...values } });
+      toast(id ? 'Asset updated' : 'Asset created'); setEditing(null); await load();
+    } catch (e) { setErr(e instanceof Error ? e.message : 'Could not save that asset.'); }
+    finally { setBusy(''); }
+  };
+  const remove = async (a: Asset) => {
+    if (!await confirmDialog(`Delete asset "${a.name}" (${a.asset_tag})?`, { confirmText: 'Delete', danger: true })) return;
+    setBusy(a.id); setErr('');
+    try { await api(`/assets/${a.id}?organization_id=${organizationId}`, token, { method: 'DELETE' }); toast('Asset deleted'); await load(); }
+    catch (e) { setErr(e instanceof Error ? e.message : 'Could not delete that asset.'); }
+    finally { setBusy(''); }
+  };
+  const list = rows.filter(a => filter === 'all' || a.status === filter);
+  const t = useTable(list, (a, k) => k === 'device' ? (devices.find(d => d.id === a.device_id)?.hostname ?? '') : (a as any)[k]);
+  const hostname = (id: string | null) => id ? (devices.find(d => d.id === id)?.hostname ?? '—') : '—';
+  const expiring = (a: Asset) => a.warranty_expires && new Date(a.warranty_expires).getTime() - Date.now() < 30 * 86400000 && new Date(a.warranty_expires).getTime() > Date.now() - 86400000;
+  return <div className="sites-workspace">
+    <Flash kind="error" msg={err}/>
+    <section className="panel page-panel"><div className="panel-head"><div><h3>Asset inventory</h3><p>{rows.length} asset{rows.length === 1 ? '' : 's'} · tags, warranty and who has what.</p></div>
+      <div className="row-actions"><Select className="filter-select" value={filter} onChange={e => setFilter(e.target.value)}><option value="all">All statuses</option>{ASSET_STATUSES.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}</Select>
+      {isOp(role) && <button className="primary-action" onClick={() => setEditing('new')}><Plus size={15}/>Add asset</button>}</div></div>
+      {loading ? <Skeleton rows={3}/> : !t.rows.length ? <EmptyState icon={<Boxes size={22}/>} title="No assets yet" text="Add laptops, monitors, printers and other equipment to keep track of them."/> : <><div className="table-wrap"><table>
+        <thead><tr><Th t={t} k="asset_tag">TAG</Th><Th t={t} k="name">NAME</Th><Th t={t} k="category">CATEGORY</Th><Th t={t} k="status">STATUS</Th><Th t={t} k="assigned_to">ASSIGNED TO</Th><Th t={t} k="warranty_expires">WARRANTY</Th><th>ACTIONS</th></tr></thead>
+        <tbody>{t.rows.map(a => <tr key={a.id}>
+          <td><code>{a.asset_tag}</code></td>
+          <td><b>{a.name}</b>{a.device_id && <div className="muted">linked: {hostname(a.device_id)}</div>}</td>
+          <td>{ASSET_CATEGORIES.find(c => c.value === a.category)?.label ?? a.category}</td>
+          <td><span className={`status-pill ${a.status === 'in_use' ? 'online' : a.status === 'retired' ? 'offline' : 'pending'}`}><i/>{ASSET_STATUSES.find(s => s.value === a.status)?.label ?? a.status}</span></td>
+          <td>{a.assigned_to ?? '—'}</td>
+          <td>{a.warranty_expires ? <span className={expiring(a) ? 'txt-warn' : ''}>{new Date(a.warranty_expires).toLocaleDateString()}</span> : '—'}</td>
+          <td>{isOp(role) && <div className="row-actions"><button className="mini-icon" title="Edit" disabled={busy === a.id} onClick={() => setEditing(a)}><Pencil size={15}/></button><button className="mini-icon danger" title="Delete" disabled={busy === a.id} onClick={() => remove(a)}><Trash2 size={15}/></button></div>}</td>
+        </tr>)}</tbody>
+      </table></div><Pager t={t}/></>}
+    </section>
+    {editing && <AssetModal asset={editing === 'new' ? null : editing} devices={devices} sites={sites} busy={!!busy} onSave={values => save(values, editing === 'new' ? undefined : editing.id)} onClose={() => setEditing(null)}/>}
+  </div>;
+}
+function AssetModal({ asset, devices, sites, busy, onSave, onClose }: { asset: Asset | null; devices: Dev[]; sites: { id: string; name: string }[]; busy: boolean; onSave: (v: Partial<Asset>) => void; onClose: () => void }) {
+  const [v, setV] = useState<Partial<Asset>>(asset ?? { asset_tag: '', name: '', category: 'laptop', status: 'in_stock' });
+  const set = (k: keyof Asset, val: any) => setV(prev => ({ ...prev, [k]: val }));
+  return <Modal title={asset ? 'Edit asset' : 'Add asset'} subtitle={asset?.asset_tag} icon={<Boxes size={17}/>} onClose={onClose}>
+    <form className="modal-form" onSubmit={e => { e.preventDefault(); onSave(v); }}>
+      <label>Asset tag<input value={v.asset_tag ?? ''} onChange={e => set('asset_tag', e.target.value)} required maxLength={60} placeholder="LAP-0042"/></label>
+      <label>Name<input value={v.name ?? ''} onChange={e => set('name', e.target.value)} required maxLength={120} placeholder="Dell Latitude 5440"/></label>
+      <label>Category<Select value={v.category ?? 'laptop'} onChange={e => set('category', e.target.value)}>{ASSET_CATEGORIES.map(c => <option key={c.value} value={c.value}>{c.label}</option>)}</Select></label>
+      <label>Status<Select value={v.status ?? 'in_stock'} onChange={e => set('status', e.target.value)}>{ASSET_STATUSES.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}</Select></label>
+      <label>Assigned to<input value={v.assigned_to ?? ''} onChange={e => set('assigned_to', e.target.value)} maxLength={120} placeholder="Name or email"/></label>
+      <label>Linked device <em className="optional">Optional</em><Select value={v.device_id ?? ''} onChange={e => set('device_id', e.target.value || null)}><option value="">None</option>{devices.map(d => <option key={d.id} value={d.id}>{d.hostname}</option>)}</Select></label>
+      <label>Site <em className="optional">Optional</em><Select value={v.site_id ?? ''} onChange={e => set('site_id', e.target.value || null)}><option value="">None</option>{sites.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}</Select></label>
+      <label>Location<input value={v.location ?? ''} onChange={e => set('location', e.target.value)} maxLength={120} placeholder="HQ · 2nd floor"/></label>
+      <label>Vendor<input value={v.vendor ?? ''} onChange={e => set('vendor', e.target.value)} maxLength={120} placeholder="Dell"/></label>
+      <label>Serial number<input value={v.serial_number ?? ''} onChange={e => set('serial_number', e.target.value)} maxLength={120}/></label>
+      <label>Purchase date<input type="date" value={v.purchase_date ?? ''} onChange={e => set('purchase_date', e.target.value || null)}/></label>
+      <label>Warranty expires<input type="date" value={v.warranty_expires ?? ''} onChange={e => set('warranty_expires', e.target.value || null)}/></label>
+      <label className="span-2">Notes<input value={v.notes ?? ''} onChange={e => set('notes', e.target.value)} maxLength={500}/></label>
+      <div className="modal-actions span-2"><button type="button" className="secondary-action" onClick={onClose} disabled={busy}>Cancel</button><button className="primary-action" disabled={busy || !v.asset_tag?.trim() || !v.name?.trim()}>{busy ? 'Saving…' : asset ? 'Save changes' : 'Add asset'}</button></div>
+    </form>
+  </Modal>;
+}
+
+/* ----------------------------------------------------------------- Tickets */
+const TICKET_STATUSES = [
+  { value: 'open', label: 'Open' }, { value: 'in_progress', label: 'In progress' },
+  { value: 'resolved', label: 'Resolved' }, { value: 'closed', label: 'Closed' },
+];
+const TICKET_PRIORITIES = [
+  { value: 'low', label: 'Low' }, { value: 'medium', label: 'Medium' }, { value: 'high', label: 'High' }, { value: 'critical', label: 'Critical' },
+];
+type Ticket = { id: string; number: number; title: string; description: string | null; status: string; priority: string; requester_email: string | null; device_id: string | null; created_at: string; updated_at: string; resolved_at: string | null };
+export function TicketsPage({ organizationId, token, devices }: { organizationId: string; role: Role; token: string; devices: Dev[] }) {
+  const [rows, setRows] = useState<Ticket[]>([]); const [loading, setLoading] = useState(true); const [err, setErr] = useState('');
+  const [filter, setFilter] = useState('open'); const [creating, setCreating] = useState(false); const [openId, setOpenId] = useState('');
+  const load = useCallback(async () => {
+    setLoading(true); setErr('');
+    try { const r = await api<{ tickets: Ticket[] }>(`/tickets?organization_id=${organizationId}`, token); setRows(r.tickets); }
+    catch (e) { setErr(e instanceof Error ? e.message : 'Could not load tickets.'); }
+    finally { setLoading(false); }
+  }, [organizationId, token]);
+  useTick(() => void load(), 20000, [load]);
+  const create = async (values: Partial<Ticket>) => {
+    try { await api('/tickets', token, { method: 'POST', body: { organization_id: organizationId, ...values } }); toast('Ticket created'); setCreating(false); await load(); }
+    catch (e) { setErr(e instanceof Error ? e.message : 'Could not create that ticket.'); }
+  };
+  const setStatus = async (t: Ticket, status: string) => {
+    try { await api(`/tickets/${t.id}`, token, { method: 'PUT', body: { organization_id: organizationId, status } }); await load(); }
+    catch (e) { setErr(e instanceof Error ? e.message : 'Could not update that ticket.'); }
+  };
+  const list = rows.filter(t => filter === 'all' || t.status === filter);
+  const t = useTable(list, (r, k) => (k === 'created_at' || k === 'updated_at') ? new Date((r as any)[k]).getTime() : (r as any)[k]);
+  const hostname = (id: string | null) => id ? (devices.find(d => d.id === id)?.hostname ?? '—') : '—';
+  const open = rows.find(r => r.id === openId) ?? null;
+  return <div className="sites-workspace">
+    <Flash kind="error" msg={err}/>
+    <section className="panel page-panel"><div className="panel-head"><div><h3>Tickets</h3><p>{rows.filter(r => r.status === 'open').length} open · {rows.length} total</p></div>
+      <div className="row-actions"><Select className="filter-select" value={filter} onChange={e => setFilter(e.target.value)}><option value="all">All</option>{TICKET_STATUSES.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}</Select>
+      <button className="primary-action" onClick={() => setCreating(true)}><Plus size={15}/>New ticket</button></div></div>
+      {loading ? <Skeleton rows={3}/> : !t.rows.length ? <EmptyState icon={<MessageSquare size={22}/>} title="No tickets" text="Nothing matches this filter."/> : <><div className="table-wrap"><table>
+        <thead><tr><th>#</th><Th t={t} k="title">TITLE</Th><Th t={t} k="priority">PRIORITY</Th><Th t={t} k="status">STATUS</Th><th>DEVICE</th><Th t={t} k="updated_at">UPDATED</Th></tr></thead>
+        <tbody>{t.rows.map(r => <tr key={r.id} className="row-click" onClick={() => setOpenId(r.id)}>
+          <td>#{r.number}</td><td><b>{r.title}</b></td>
+          <td><span className={`sev sev-${r.priority === 'critical' ? 'critical' : r.priority === 'high' ? 'warning' : 'info'}`}>{TICKET_PRIORITIES.find(p => p.value === r.priority)?.label}</span></td>
+          <td><span className={`status-pill ${r.status === 'open' ? 'pending' : r.status === 'resolved' || r.status === 'closed' ? 'online' : 'offline'}`}><i/>{TICKET_STATUSES.find(s => s.value === r.status)?.label}</span></td>
+          <td>{hostname(r.device_id)}</td><td>{ago(r.updated_at)}</td>
+        </tr>)}</tbody>
+      </table></div><Pager t={t}/></>}
+    </section>
+    {creating && <TicketModal devices={devices} onSave={create} onClose={() => setCreating(false)}/>}
+    {open && <TicketDrawer ticket={open} organizationId={organizationId} token={token} devices={devices} onStatus={s => setStatus(open, s)} onClose={() => { setOpenId(''); void load(); }}/>}
+  </div>;
+}
+function TicketModal({ devices, onSave, onClose }: { devices: Dev[]; onSave: (v: Partial<Ticket>) => void; onClose: () => void }) {
+  const [title, setTitle] = useState(''); const [description, setDescription] = useState(''); const [priority, setPriority] = useState('medium');
+  const [requesterEmail, setRequesterEmail] = useState(''); const [deviceId, setDeviceId] = useState(''); const [busy, setBusy] = useState(false);
+  return <Modal title="New ticket" icon={<MessageSquare size={17}/>} onClose={onClose}>
+    <form className="modal-form" onSubmit={async e => { e.preventDefault(); setBusy(true); await onSave({ title, description, priority, requester_email: requesterEmail || undefined, device_id: deviceId || undefined }); setBusy(false); }}>
+      <label className="span-2">Title<input value={title} onChange={e => setTitle(e.target.value)} required maxLength={160} placeholder="Printer on 2nd floor not working"/></label>
+      <label className="span-2">Description<input value={description} onChange={e => setDescription(e.target.value)} maxLength={1000} placeholder="What's happening, since when…"/></label>
+      <label>Priority<Select value={priority} onChange={e => setPriority(e.target.value)}>{TICKET_PRIORITIES.map(p => <option key={p.value} value={p.value}>{p.label}</option>)}</Select></label>
+      <label>Related device <em className="optional">Optional</em><Select value={deviceId} onChange={e => setDeviceId(e.target.value)}><option value="">None</option>{devices.map(d => <option key={d.id} value={d.id}>{d.hostname}</option>)}</Select></label>
+      <label className="span-2">Requester email <em className="optional">Optional</em><input type="email" value={requesterEmail} onChange={e => setRequesterEmail(e.target.value)} placeholder="colleague@company.com"/></label>
+      <div className="modal-actions span-2"><button type="button" className="secondary-action" onClick={onClose} disabled={busy}>Cancel</button><button className="primary-action" disabled={busy || !title.trim()}>{busy ? 'Creating…' : 'Create ticket'}</button></div>
+    </form>
+  </Modal>;
+}
+function TicketDrawer({ ticket, organizationId, token, devices, onStatus, onClose }: { ticket: Ticket; organizationId: string; token: string; devices: Dev[]; onStatus: (s: string) => void; onClose: () => void }) {
+  const [comments, setComments] = useState<{ id: string; author_email: string | null; body: string; created_at: string }[]>([]);
+  const [text, setText] = useState(''); const [busy, setBusy] = useState(false); const [err, setErr] = useState('');
+  const load = useCallback(async () => {
+    try { const r = await api<{ comments: typeof comments }>(`/tickets/${ticket.id}/comments?organization_id=${organizationId}`, token); setComments(r.comments); }
+    catch (e) { setErr(e instanceof Error ? e.message : 'Could not load comments.'); }
+  }, [ticket.id, organizationId, token]);
+  useEffect(() => { void load(); }, [load]);
+  const send = async () => {
+    if (!text.trim()) return; setBusy(true); setErr('');
+    try { await api(`/tickets/${ticket.id}/comments`, token, { method: 'POST', body: { organization_id: organizationId, body: text.trim() } }); setText(''); await load(); }
+    catch (e) { setErr(e instanceof Error ? e.message : 'Could not send that comment.'); }
+    finally { setBusy(false); }
+  };
+  return <Drawer title={`#${ticket.number} · ${ticket.title}`} onClose={onClose}>
+    <Flash kind="error" msg={err}/>
+    <div className="ticket-meta">
+      <Select className="filter-select" value={ticket.status} onChange={e => onStatus(e.target.value)}>{TICKET_STATUSES.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}</Select>
+      <span className={`sev sev-${ticket.priority === 'critical' ? 'critical' : ticket.priority === 'high' ? 'warning' : 'info'}`}>{TICKET_PRIORITIES.find(p => p.value === ticket.priority)?.label}</span>
+      {ticket.device_id && <span className="muted">device: {devices.find(d => d.id === ticket.device_id)?.hostname ?? '—'}</span>}
+    </div>
+    {ticket.description && <p className="muted" style={{ lineHeight: 1.6 }}>{ticket.description}</p>}
+    {ticket.requester_email && <p className="muted">Requested by {ticket.requester_email}</p>}
+    <div className="settings-divider"/>
+    <div className="ticket-comments">
+      {comments.map(c => <div key={c.id} className="ticket-comment"><b>{c.author_email ?? 'Someone'}</b><small>{new Date(c.created_at).toLocaleString()}</small><p>{c.body}</p></div>)}
+      {!comments.length && <p className="muted">No comments yet.</p>}
+    </div>
+    <div className="ticket-comment-form">
+      <input value={text} onChange={e => setText(e.target.value)} placeholder="Write an update…" onKeyDown={e => { if (e.key === 'Enter') send(); }}/>
+      <button className="primary-action" onClick={send} disabled={busy || !text.trim()}>{busy ? 'Sending…' : 'Reply'}</button>
+    </div>
+  </Drawer>;
 }

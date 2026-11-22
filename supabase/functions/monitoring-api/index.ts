@@ -1011,7 +1011,7 @@ async function handle(req: Request): Promise<Response> {
     return json({ ok: true, user_id: targetUserId });
   }
 
-  const PERMISSION_RESOURCES = ["devices", "sites", "networks", "alerts", "maintenance", "uptime", "notifications", "team", "platform"];
+  const PERMISSION_RESOURCES = ["devices", "sites", "networks", "alerts", "maintenance", "uptime", "notifications", "team", "platform", "assets", "tickets"];
   const PERMISSION_ACTIONS = ["can_view", "can_create", "can_edit", "can_delete"] as const;
 
   if (req.method === "GET" && path === "/team/roles") {
@@ -1152,6 +1152,163 @@ async function handle(req: Request): Promise<Response> {
     const tally: Record<string, number> = { sent: 0, failed: 0, skipped: 0 };
     for (const d of deliveries || []) tally[d.status] = (tally[d.status] || 0) + 1;
     return json({ ...overview, api_version: API_VERSION, latest_agent_version: LATEST_AGENT_VERSION, events: events || [], notifications_7d: tally, integrations: { email: Boolean(RESEND_API_KEY), telegram: Boolean(TELEGRAM_BOT_TOKEN) } });
+  }
+
+  // ---- Assets (Snipe-IT style inventory) -----------------------------------------------------
+  if (req.method === "GET" && path === "/assets") {
+    const organizationId = url.searchParams.get("organization_id") || "";
+    await requirePermission(req, organizationId, "assets", "view");
+    const { data, error } = await admin.from("assets").select("*").eq("organization_id", organizationId).order("created_at", { ascending: false });
+    if (error) return fail("Could not load assets", 500);
+    return json({ assets: data || [] });
+  }
+
+  if (req.method === "POST" && path === "/assets") {
+    const body = await readJson(req);
+    const organizationId = String(body.organization_id || "");
+    const { user } = await requirePermission(req, organizationId, "assets", "create");
+    const assetTag = String(body.asset_tag || "").trim();
+    const name = String(body.name || "").trim();
+    if (!assetTag || !name) return fail("Asset tag and name are required");
+    const row = {
+      organization_id: organizationId, asset_tag: assetTag, name,
+      category: String(body.category || "other"), status: String(body.status || "in_stock"),
+      assigned_to: body.assigned_to ? String(body.assigned_to).trim() : null,
+      device_id: body.device_id || null, site_id: body.site_id || null,
+      location: body.location ? String(body.location).trim() : null,
+      vendor: body.vendor ? String(body.vendor).trim() : null,
+      serial_number: body.serial_number ? String(body.serial_number).trim() : null,
+      purchase_date: body.purchase_date || null, warranty_expires: body.warranty_expires || null,
+      notes: body.notes ? String(body.notes).trim() : null,
+    };
+    const { data, error } = await admin.from("assets").insert(row).select("*").single();
+    if (error) return fail(error.code === "23505" ? "An asset with that tag already exists" : "Could not create asset", error.code === "23505" ? 409 : 500);
+    await audit(organizationId, "user", user.id, "create_asset", "asset", data.id, { asset_tag: assetTag });
+    return json({ ok: true, asset: data }, 201);
+  }
+
+  const assetIdMatch = path.match(new RegExp(`^/assets/${uuidPart}$`, "i"));
+  if (req.method === "PUT" && assetIdMatch) {
+    const assetId = assetIdMatch[1];
+    const body = await readJson(req);
+    const organizationId = String(body.organization_id || "");
+    const { user } = await requirePermission(req, organizationId, "assets", "edit");
+    const { data: existing } = await admin.from("assets").select("id").eq("id", assetId).eq("organization_id", organizationId).maybeSingle();
+    if (!existing) return fail("Asset not found in this workspace", 404);
+    const patch: Record<string, unknown> = { updated_at: new Date().toISOString() };
+    for (const k of ["asset_tag", "name", "category", "status", "assigned_to", "device_id", "site_id", "location", "vendor", "serial_number", "purchase_date", "warranty_expires", "notes"]) {
+      if (body[k] !== undefined) patch[k] = typeof body[k] === "string" ? body[k].trim() || null : body[k];
+    }
+    const { data, error } = await admin.from("assets").update(patch).eq("id", assetId).select("*").single();
+    if (error) return fail(error.code === "23505" ? "An asset with that tag already exists" : "Could not update asset", error.code === "23505" ? 409 : 500);
+    await audit(organizationId, "user", user.id, "update_asset", "asset", assetId, {});
+    return json({ ok: true, asset: data });
+  }
+
+  if (req.method === "DELETE" && assetIdMatch) {
+    const assetId = assetIdMatch[1];
+    const organizationId = url.searchParams.get("organization_id") || "";
+    const { user } = await requirePermission(req, organizationId, "assets", "delete");
+    const { data: existing } = await admin.from("assets").select("id").eq("id", assetId).eq("organization_id", organizationId).maybeSingle();
+    if (!existing) return fail("Asset not found in this workspace", 404);
+    const { error } = await admin.from("assets").delete().eq("id", assetId);
+    if (error) return fail("Could not delete asset", 500);
+    await audit(organizationId, "user", user.id, "delete_asset", "asset", assetId, {});
+    return json({ ok: true, asset_id: assetId });
+  }
+
+  // ---- Tickets (GLPI style helpdesk) ----------------------------------------------------------
+  if (req.method === "GET" && path === "/tickets") {
+    const organizationId = url.searchParams.get("organization_id") || "";
+    await requirePermission(req, organizationId, "tickets", "view");
+    const { data, error } = await admin.from("tickets").select("*").eq("organization_id", organizationId).order("created_at", { ascending: false });
+    if (error) return fail("Could not load tickets", 500);
+    return json({ tickets: data || [] });
+  }
+
+  if (req.method === "POST" && path === "/tickets") {
+    const body = await readJson(req);
+    const organizationId = String(body.organization_id || "");
+    const { user } = await requirePermission(req, organizationId, "tickets", "create");
+    const title = String(body.title || "").trim();
+    if (!title) return fail("Title is required");
+    const row = {
+      organization_id: organizationId, title, description: body.description ? String(body.description).trim() : null,
+      priority: String(body.priority || "medium"), requester_email: body.requester_email ? String(body.requester_email).trim() : null,
+      device_id: body.device_id || null, assigned_user_id: body.assigned_user_id || null, created_by: user.id,
+    };
+    const { data, error } = await admin.from("tickets").insert(row).select("*").single();
+    if (error) return fail("Could not create ticket", 500);
+    await audit(organizationId, "user", user.id, "create_ticket", "ticket", data.id, { title });
+    return json({ ok: true, ticket: data }, 201);
+  }
+
+  const ticketIdMatch = path.match(new RegExp(`^/tickets/${uuidPart}$`, "i"));
+  if (req.method === "PUT" && ticketIdMatch) {
+    const ticketId = ticketIdMatch[1];
+    const body = await readJson(req);
+    const organizationId = String(body.organization_id || "");
+    const { user } = await requirePermission(req, organizationId, "tickets", "edit");
+    const { data: existing } = await admin.from("tickets").select("id,status").eq("id", ticketId).eq("organization_id", organizationId).maybeSingle();
+    if (!existing) return fail("Ticket not found in this workspace", 404);
+    const patch: Record<string, unknown> = { updated_at: new Date().toISOString() };
+    for (const k of ["title", "description", "status", "priority", "requester_email", "assigned_user_id", "device_id"]) {
+      if (body[k] !== undefined) patch[k] = typeof body[k] === "string" ? body[k].trim() || null : body[k];
+    }
+    if (patch.status === "resolved" && existing.status !== "resolved") patch.resolved_at = new Date().toISOString();
+    if (patch.status && patch.status !== "resolved") patch.resolved_at = existing.status === "resolved" ? null : undefined;
+    const { data, error } = await admin.from("tickets").update(patch).eq("id", ticketId).select("*").single();
+    if (error) return fail("Could not update ticket", 500);
+    await audit(organizationId, "user", user.id, "update_ticket", "ticket", ticketId, { status: body.status });
+    return json({ ok: true, ticket: data });
+  }
+
+  if (req.method === "DELETE" && ticketIdMatch) {
+    const ticketId = ticketIdMatch[1];
+    const organizationId = url.searchParams.get("organization_id") || "";
+    const { user } = await requirePermission(req, organizationId, "tickets", "delete");
+    const { data: existing } = await admin.from("tickets").select("id").eq("id", ticketId).eq("organization_id", organizationId).maybeSingle();
+    if (!existing) return fail("Ticket not found in this workspace", 404);
+    const { error } = await admin.from("tickets").delete().eq("id", ticketId);
+    if (error) return fail("Could not delete ticket", 500);
+    await audit(organizationId, "user", user.id, "delete_ticket", "ticket", ticketId, {});
+    return json({ ok: true, ticket_id: ticketId });
+  }
+
+  const ticketCommentsMatch = path.match(new RegExp(`^/tickets/${uuidPart}/comments$`, "i"));
+  if (req.method === "GET" && ticketCommentsMatch) {
+    const ticketId = ticketCommentsMatch[1];
+    const organizationId = url.searchParams.get("organization_id") || "";
+    await requirePermission(req, organizationId, "tickets", "view");
+    const { data: ticket } = await admin.from("tickets").select("id").eq("id", ticketId).eq("organization_id", organizationId).maybeSingle();
+    if (!ticket) return fail("Ticket not found in this workspace", 404);
+    const { data, error } = await admin.from("ticket_comments").select("id,author_user_id,body,created_at").eq("ticket_id", ticketId).order("created_at");
+    if (error) return fail("Could not load comments", 500);
+    const authorIds = [...new Set((data || []).map((c: any) => c.author_user_id).filter(Boolean))];
+    const emails = new Map<string, string>();
+    if (authorIds.length) {
+      const { data: members } = await admin.from("organization_members").select("user_id").eq("organization_id", organizationId).in("user_id", authorIds);
+      for (const m of members || []) {
+        const { data: u } = await admin.auth.admin.getUserById(m.user_id);
+        if (u?.user?.email) emails.set(m.user_id, u.user.email);
+      }
+    }
+    return json({ comments: (data || []).map((c: any) => ({ ...c, author_email: emails.get(c.author_user_id) || null })) });
+  }
+
+  if (req.method === "POST" && ticketCommentsMatch) {
+    const ticketId = ticketCommentsMatch[1];
+    const body = await readJson(req);
+    const organizationId = String(body.organization_id || "");
+    const { user } = await requirePermission(req, organizationId, "tickets", "edit");
+    const bodyText = String(body.body || "").trim();
+    if (!bodyText) return fail("Comment text is required");
+    const { data: ticket } = await admin.from("tickets").select("id").eq("id", ticketId).eq("organization_id", organizationId).maybeSingle();
+    if (!ticket) return fail("Ticket not found in this workspace", 404);
+    const { data, error } = await admin.from("ticket_comments").insert({ ticket_id: ticketId, organization_id: organizationId, author_user_id: user.id, body: bodyText }).select("id,author_user_id,body,created_at").single();
+    if (error) return fail("Could not add comment", 500);
+    await admin.from("tickets").update({ updated_at: new Date().toISOString() }).eq("id", ticketId);
+    return json({ ok: true, comment: { ...data, author_email: user.email || null } }, 201);
   }
 
   return fail("Route not found", 404);

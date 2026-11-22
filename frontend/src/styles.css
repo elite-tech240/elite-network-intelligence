@@ -1242,6 +1242,14 @@ th{background:rgba(255,255,255,.025)!important}
 @media (prefers-reduced-motion:reduce){.fx-beam,.fx-floor{animation:none!important}.lv-chip:hover::before,.lv-card:hover::before{animation:none!important}}
 @media(max-width:650px){.fx-floor{opacity:.45}.fx-beam{top:-420px}}
 .fx-beam{top:-300px;height:760px;background:conic-gradient(from 180deg at 50% 0%,transparent 128deg,rgba(245,99,15,.42) 162deg,rgba(255,205,160,.22) 180deg,rgba(245,99,15,.42) 198deg,transparent 232deg);filter:blur(38px)}
+.ticket-meta{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:14px}
+.ticket-comments{display:flex;flex-direction:column;gap:12px;margin:14px 0}
+.ticket-comment{padding:11px 13px;background:#1f1f20;border:1px solid #363637;border-radius:8px}
+.ticket-comment b{display:block;font-size:12px;color:#e2eaf6}
+.ticket-comment small{display:block;font-size:12px;color:#8495ad;margin:2px 0 6px}
+.ticket-comment p{margin:0;font-size:13px;color:#c3cddb;line-height:1.5;white-space:pre-wrap}
+.ticket-comment-form{display:flex;gap:8px}
+.ticket-comment-form input{flex:1}
 .fx-beam::after{content:"";position:absolute;left:50%;top:300px;width:520px;height:160px;transform:translateX(-50%);border-radius:50%;background:radial-gradient(ellipse,rgba(255,154,92,.22),transparent 70%);filter:blur(20px)}
 /* v2.4 — grid floor in quiet grey, close to the background */
 .fx-floor{background-image:linear-gradient(rgba(255,255,255,.055) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.055) 1px,transparent 1px)!important;opacity:1!important}

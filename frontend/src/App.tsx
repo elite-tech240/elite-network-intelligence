@@ -1,5 +1,5 @@
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Activity, Pencil, Users, Bell, Boxes, Cable, ChevronDown, CircleHelp, LayoutDashboard, LogOut, Network, Search, Settings, ShieldCheck, ScrollText, Globe2, FileBarChart, ClipboardList, Gauge, MonitorUp, Zap, LockKeyhole, Eye, EyeOff, MapPin, Server, ArrowUpRight, UserRound, KeyRound, Sun, Moon, Languages, MoreHorizontal, Building2, Check, Plus, Trash2, RefreshCw, Layers } from 'lucide-react';
+import { Activity, Pencil, Users, Bell, Boxes, Cable, ChevronDown, CircleHelp, LayoutDashboard, LogOut, Network, Search, Settings, ShieldCheck, ScrollText, Globe2, FileBarChart, ClipboardList, Gauge, MonitorUp, Zap, LockKeyhole, Eye, EyeOff, MapPin, Server, ArrowUpRight, UserRound, KeyRound, Sun, Moon, Languages, MoreHorizontal, Building2, Check, Plus, Trash2, RefreshCw, Layers, MessageSquare } from 'lucide-react';
 import type { Session, User } from '@supabase/supabase-js';
 
 type Device = { id: string; hostname: string; ip_address: string | null; status: string; device_type: string | null; last_seen_at: string | null; site_id?: string; archived_at?: string | null; agent_version?: string | null; parent_device_id?: string | null; os_name?: string | null };
@@ -10,7 +10,7 @@ import { LiveOverview } from './LiveOverview';
 import { supabase, configured, apiUrl, api, fmtBps, LATEST_AGENT_VERSION, SELF_UPDATE_FROM, versionAtLeast, publishedAgentVersion, pendingAuthAction } from './lib';
 import { AgentInstaller } from './AgentInstaller';
 import { Toaster, ConfirmHost, Flash, confirmDialog, toast, usePrefs, tr, CommandPalette, Drawer, Skeleton, EmptyState, useTable, Th, Pager, Select, Modal, type Command } from './ui';
-import { LogsPage, UptimePage, ReportsPage, AuditPage, PlatformPage, ChannelsPanel, MaintenancePanel, DiscoveryPanel, DeviceDetail, NocWall } from './Monitoring';
+import { LogsPage, UptimePage, ReportsPage, AuditPage, PlatformPage, ChannelsPanel, MaintenancePanel, DiscoveryPanel, DeviceDetail, NocWall, AssetsPage, TicketsPage } from './Monitoring';
 import { VirtualizationPage } from './Virtualization';
 const nav = [
   { label: 'Overview', icon: LayoutDashboard, path: '/' }, { label: 'Devices', icon: Boxes, path: '/devices' },
@@ -18,14 +18,15 @@ const nav = [
   { label: 'Alerts', icon: Bell, path: '/alerts' }, { label: 'Logs', icon: ScrollText, path: '/logs' },
   { label: 'Uptime', icon: Globe2, path: '/uptime' }, { label: 'Reports', icon: FileBarChart, path: '/reports' },
   { label: 'Audit log', icon: ClipboardList, path: '/audit' }, { label: 'Sites & Networks', icon: Cable, path: '/sites' },
+  { label: 'Assets', icon: Boxes, path: '/assets' }, { label: 'Tickets', icon: MessageSquare, path: '/tickets' },
 ];
 const adminNav = { label: 'Platform', icon: Gauge, path: '/platform' };
 const NAV_GROUPS = [
   { id: 'monitor', label: 'Monitor', items: ['Overview','Devices','Topology','Virtualization','Traffic','Alerts','Logs','Uptime'] },
   { id: 'insights', label: 'Insights', items: ['Reports','Audit log'] },
-  { id: 'manage', label: 'Manage', items: ['Sites & Networks','Platform','Settings','NOC wall','Documentation'] },
+  { id: 'manage', label: 'Manage', items: ['Assets','Tickets','Sites & Networks','Platform','Settings','NOC wall','Documentation'] },
 ];
-const NAV_DESC: Record<string, string> = { Overview: 'Live map and health at a glance', Devices: 'Every endpoint and its status', Topology: 'Sites, networks and connections', Virtualization: 'ESXi hosts and their VMs', Traffic: 'Throughput by device', Alerts: 'Open incidents and alert rules', Logs: 'Warnings, errors and sign-ins', Uptime: 'Websites and ports', Reports: 'Availability and incident summaries', 'Audit log': 'Who changed what, and when', 'Sites & Networks': 'Places, IP ranges and agent installer', Platform: 'Health of the monitoring service', Settings: 'Account, team and notifications', 'NOC wall': 'Full-screen view for a wall display', Documentation: 'Guides and setup docs' };
+const NAV_DESC: Record<string, string> = { Overview: 'Live map and health at a glance', Devices: 'Every endpoint and its status', Topology: 'Sites, networks and connections', Virtualization: 'ESXi hosts and their VMs', Traffic: 'Throughput by device', Alerts: 'Open incidents and alert rules', Logs: 'Warnings, errors and sign-ins', Uptime: 'Websites and ports', Reports: 'Availability and incident summaries', 'Audit log': 'Who changed what, and when', 'Sites & Networks': 'Places, IP ranges and agent installer', Platform: 'Health of the monitoring service', Settings: 'Account, team and notifications', 'NOC wall': 'Full-screen view for a wall display', Documentation: 'Guides and setup docs', Assets: 'Inventory, tags and warranty', Tickets: 'Requests and incidents from your team' };
 const pageFromPath = () => [...nav, adminNav].find(n => n.path === window.location.pathname)?.label ?? (window.location.pathname === '/settings' ? 'Settings' : 'Overview');
 
 export default function App() {
@@ -252,6 +253,8 @@ export default function App() {
           {page === 'Reports' && <ReportsPage organizationId={membership.organization_id} token={session.access_token}/>}
           {page === 'NOC wall' && <NocWall devices={nonEsxiDevices} organizationId={membership.organization_id} embedded onPresent={() => setNoc(true)}/>}
           {page === 'Audit log' && <AuditPage organizationId={membership.organization_id}/>}
+          {page === 'Assets' && <AssetsPage organizationId={membership.organization_id} role={membership.role} token={session.access_token} devices={nonEsxiDevices} sites={sites}/>}
+          {page === 'Tickets' && <TicketsPage organizationId={membership.organization_id} role={membership.role} token={session.access_token} devices={nonEsxiDevices}/>}
           {page === 'Platform' && ['owner','admin'].includes(membership.role) && <PlatformPage organizationId={membership.organization_id} token={session.access_token}/>}
           {page === 'Sites & Networks' && <SitesPage key={'t'+pageTab} initialTab={pageTab} sites={sites} networks={networks} organizationId={membership.organization_id} role={membership.role} accessToken={session.access_token} onRefresh={refresh}/>}
           {page === 'Settings' && <SettingsPage key={'s'+pageTab} initialTab={pageTab} user={session.user} membership={membership} accessToken={session.access_token} onSignOut={signOut} orgName={orgName} onDeleteWorkspace={() => setDelWs(true)}/>}
@@ -305,7 +308,7 @@ function AuthScreen({configured, email, setEmail, password, setPassword, showPas
     {configured && <button className="auth-link" onClick={()=>setResetMode(!resetMode)}>{resetMode ? 'Back to sign in' : 'Forgot password?'}</button>}<div className="auth-foot"><ShieldCheck size={15}/> Protected by secure authentication · No public sign-up</div></div></div>;
 }
 
-function pageDescription(page:string) { return ({Overview:'Monitor the health and activity of your network infrastructure.',Devices:'Every enrolled endpoint and its latest reported status.',Topology:'Understand how your sites, networks, and devices are connected.',Traffic:'Network traffic analytics and telemetry.',Alerts:'Review incidents and configure alerting workflows.',Logs:'Warnings, errors and failed sign-ins collected from your devices.',Uptime:'Check that your websites and services are reachable.',Reports:'Availability, usage and incident summaries.','Audit log':'A record of who changed what in this workspace.',Platform:'Health of the monitoring service itself.', 'Sites & Networks':'Manage the physical sites and logical networks in your workspace.',Settings:'Account identity, workspace permissions, and system administration.'} as Record<string,string>)[page] ?? ''; }
+function pageDescription(page:string) { return ({Overview:'Monitor the health and activity of your network infrastructure.',Devices:'Every enrolled endpoint and its latest reported status.',Topology:'Understand how your sites, networks, and devices are connected.',Traffic:'Network traffic analytics and telemetry.',Alerts:'Review incidents and configure alerting workflows.',Logs:'Warnings, errors and failed sign-ins collected from your devices.',Uptime:'Check that your websites and services are reachable.',Reports:'Availability, usage and incident summaries.','Audit log':'A record of who changed what in this workspace.',Platform:'Health of the monitoring service itself.', 'Sites & Networks':'Manage the physical sites and logical networks in your workspace.',Settings:'Account identity, workspace permissions, and system administration.',Assets:'Track laptops, monitors, printers and other equipment — tags, status and warranty.',Tickets:'Requests and incidents raised by your team, tracked to resolution.'} as Record<string,string>)[page] ?? ''; }
 function DevicesPage({devices,archivedDevices,loading,organizationId,role,accessToken,onRefresh,sites}:{sites:Site[];devices:Device[];archivedDevices:Device[];loading:boolean;organizationId:string;role:Membership['role'];accessToken:string;onRefresh:()=>void}) {
  const [openId,setOpenId]=useState(''),[filter,setFilter]=useState('all'),[metrics,setMetrics]=useState<any[]>([]),[actionError,setActionError]=useState(''),[actionMessage,setActionMessage]=useState(''),[busyDevice,setBusyDevice]=useState(''),[tab,setTab]=useState('inventory');
  const filtered=useMemo(()=>devices.filter(d=>filter==='all'||deviceStatus(d)===filter),[devices,filter]);
@@ -473,6 +476,8 @@ const PERMISSION_RESOURCES: { value: string; label: string }[] = [
   { value: 'notifications', label: 'Notifications' },
   { value: 'team', label: 'Team' },
   { value: 'platform', label: 'Platform' },
+  { value: 'assets', label: 'Assets' },
+  { value: 'tickets', label: 'Tickets' },
 ];
 type RolePermission = { resource: string; can_view: boolean; can_create: boolean; can_edit: boolean; can_delete: boolean };
 type CustomRole = { id: string; name: string; created_at: string; permissions: RolePermission[] };
