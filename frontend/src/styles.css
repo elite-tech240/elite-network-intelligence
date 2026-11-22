@@ -1350,3 +1350,49 @@ th{background:rgba(255,255,255,.025)!important}
 .perm-all{font-size:11px!important;padding:0!important}
 .panel-pad,.roles-grid{padding-left:14px;padding-right:14px}
 }
+
+/* v2.6 — account menu, mobile bottom sheets, light-theme contrast */
+.acct-menu{padding:6px}
+.acct-menu .acct-menu-head{padding:10px 10px 12px;border-bottom:1px solid var(--glass-line)}
+.acct-menu .acct-menu-head small{text-transform:capitalize;color:var(--muted2)}
+.acct-menu .ws-item{display:flex;align-items:center;gap:10px;width:100%;min-height:40px;padding:8px 10px;border:0;border-radius:9px;background:none;color:#e3e8ef;font:var(--fs) 'DM Sans',sans-serif;cursor:pointer;text-align:start}
+.acct-menu .ws-item>svg{color:#ff9a5c;flex-shrink:0}
+.acct-menu .ws-item span{flex:1;min-width:0}
+.acct-menu .ws-item.danger,.acct-menu .ws-item.danger>svg{color:#fda4af}
+.acct-menu .ws-item.danger:hover{background:rgba(251,113,133,.12)!important}
+.acct-menu .ws-sep{margin:6px 4px}
+@media(max-width:640px){
+.acct-menu,.bell-menu{position:fixed;left:12px;right:12px;top:68px;width:auto;max-height:calc(100dvh - 90px);overflow:auto}
+.modal-back{place-items:end center!important;padding:0!important;align-items:end}
+.modal-back>.modal{width:100%!important;max-width:none;max-height:92dvh;border-radius:20px 20px 0 0!important;border-bottom:0!important;overflow-y:auto!important;overscroll-behavior:contain;padding-bottom:env(safe-area-inset-bottom);animation:sheet-up .24s cubic-bezier(.2,1,.3,1)}
+.modal-back>.modal::before{content:'';display:block;width:38px;height:4px;margin:8px auto 0;border-radius:4px;background:rgba(255,255,255,.22);position:sticky;top:8px;z-index:4}
+.modal.form-modal .form-modal-head{position:sticky;top:0;z-index:3;background:rgba(16,16,18,.99);padding:14px 18px 14px}
+.modal.form-modal .modal-form{padding:18px 18px 0}
+.modal.form-modal .modal-actions{position:sticky;bottom:0;z-index:3;margin:16px -18px 0;padding:12px 18px calc(12px + env(safe-area-inset-bottom));background:rgba(16,16,18,.99);border-top:1px solid var(--glass-line);flex-wrap:nowrap}
+.modal.form-modal .modal-actions button{flex:1;min-width:0}
+.modal.confirm-modal{padding:22px 18px calc(18px + env(safe-area-inset-bottom))}
+.modal.confirm-modal .modal-actions{position:static;margin:0;padding:0;border:0;background:none}
+.drawer-back{align-items:flex-end}
+.drawer{width:100%!important;height:auto;max-height:92dvh;border-radius:20px 20px 0 0;border-inline-start:0!important;animation:sheet-up .24s cubic-bezier(.2,1,.3,1)}
+.palette{border-radius:20px 20px 0 0!important}
+.modal-back.palette-back{place-items:start center!important}
+.modal-back.palette-back .palette{border-radius:16px!important;margin:12px;width:calc(100% - 24px)}
+}
+@keyframes sheet-up{from{transform:translateY(40px);opacity:0}to{transform:none;opacity:1}}
+/* light theme (page is inverted, so lighter values here = darker text) */
+html[data-theme=light]{--muted2:#c4c4cc;--muted3:#a9a9b3}
+html[data-theme=light] th,html[data-theme=light] .eyebrow{color:#d0d0d8!important}
+html[data-theme=light] td,html[data-theme=light] .panel-head p,html[data-theme=light] .page-heading p,html[data-theme=light] .muted,html[data-theme=light] small{color:#c0c0c8!important}
+html[data-theme=light] .panel::before,html[data-theme=light] .panel-head{background:none!important}
+html[data-theme=light] .panel,html[data-theme=light] .stat-card{background:#fff1!important}
+html[data-theme=light] .panel,html[data-theme=light] .stat-card,html[data-theme=light] .lv-map,html[data-theme=light] .lv-stat,html[data-theme=light] .lv-feed,html[data-theme=light] .lv-card,html[data-theme=light] .modal,html[data-theme=light] .role-tile{background:#000!important;border-color:rgba(255,255,255,.16)!important;box-shadow:0 1px 2px rgba(255,255,255,.06),0 8px 24px rgba(255,255,255,.04)!important}
+html[data-theme=light] .panel::before,html[data-theme=light] .stat-card::before{opacity:.35}
+html[data-theme=light] .panel th{background:rgba(255,255,255,.05)!important}
+html[data-theme=light] .status-pill,html[data-theme=light] .sev,html[data-theme=light] .state-pill,html[data-theme=light] .role-badge{filter:contrast(1.45) saturate(1.4)}
+html[data-theme=light] .tab-btn,html[data-theme=light] .page-tabs button{color:#d6d6dc}
+@media(max-width:640px){html[data-theme=light] .modal.form-modal .form-modal-head,html[data-theme=light] .modal.form-modal .modal-actions{background:#000}}
+html[data-theme=light] .sev,html[data-theme=light] .status-pill,html[data-theme=light] .state-pill{filter:none}
+html[data-theme=light] .sev-critical,html[data-theme=light] .sev-error,html[data-theme=light] .status-pill.offline{color:#ff7a85!important;background:rgba(255,90,105,.26)!important}
+html[data-theme=light] .sev-warning,html[data-theme=light] .sev-warn,html[data-theme=light] .status-pill.pending{color:#ffd54f!important;background:rgba(255,200,60,.26)!important}
+html[data-theme=light] .sev-high{color:#ffb070!important}
+html[data-theme=light] .status-pill.online{color:#7ee2b0!important;background:rgba(52,211,153,.26)!important}
