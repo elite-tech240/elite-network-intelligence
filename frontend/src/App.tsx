@@ -489,6 +489,7 @@ function TeamManagement({organizationId,role,accessToken,currentUserId}:{organiz
   const [editingMember,setEditingMember]=useState<TeamMember|null>(null);
   const [editingRole,setEditingRole]=useState<CustomRole|'new'|null>(null);
   const [inviting,setInviting]=useState(false);
+  const [managingRoles,setManagingRoles]=useState(false);
   if (!['owner','admin'].includes(role)) return null;
   const load = useCallback(async () => {
     setLoading(true); setError('');
@@ -538,35 +539,35 @@ function TeamManagement({organizationId,role,accessToken,currentUserId}:{organiz
   const mt = useTable(members, (m,k)=>k==='role'?(m.role==='custom'?(m.custom_role_name||'Custom'):m.role):(m as any)[k]);
   const rt = useTable(roles, (r,k)=>(r as any)[k]);
   return <section className="panel settings-card">
-    <div className="panel-head"><div><div className="settings-icon"><UserRound size={19}/></div><h3>Team</h3><p>Everyone with access to this workspace, and the roles that decide what they can do.</p></div>
-      <button className="primary-action" onClick={()=>setInviting(true)}><Plus size={15}/>Invite member</button></div>
+    <div className="panel-head"><div><div className="settings-icon"><UserRound size={19}/></div><h3>Team</h3><p>Everyone with access to this workspace. Roles decide what each person can do — pick a built-in role or a custom one you've built.</p></div>
+      <div className="row-actions"><button className="secondary-action" onClick={()=>setManagingRoles(true)}><ShieldCheck size={15}/>Manage roles{roles.length?` (${roles.length})`:''}</button><button className="primary-action" onClick={()=>setInviting(true)}><Plus size={15}/>Invite member</button></div></div>
     <Flash kind="error" msg={error}/>
     {loading ? <Skeleton rows={3}/> : !members.length ? <EmptyState icon={<UserRound size={22}/>} title="No members yet" text="Invite someone to get started."/> : <><div className="table-wrap"><table>
       <thead><tr><Th t={mt} k="email">EMAIL</Th><Th t={mt} k="role">ROLE</Th><th>ACTIONS</th></tr></thead>
       <tbody>{mt.rows.map(m => { const self = m.user_id === currentUserId; const canEditThis = role === 'owner' || !['owner','admin'].includes(m.role); return (
         <tr key={m.user_id}>
           <td>{m.email}{self ? ' (you)' : ''}</td>
-          <td><span className={m.role==='owner'?'role-badge owner':'role-badge'}>{m.role==='custom'?(m.custom_role_name||'Custom'):m.role}</span></td>
+          <td><span className={m.role==='owner'?'role-badge owner':m.role==='custom'?'role-badge custom':'role-badge'}>{m.role==='custom'?(m.custom_role_name||'Custom'):m.role}</span></td>
           <td>{!self && canEditThis && <div className="row-actions"><button className="mini-icon" title="Edit permissions" disabled={busyId===m.user_id} onClick={()=>setEditingMember(m)}><Pencil size={15}/></button><button className="mini-icon danger" title="Remove member" disabled={busyId===m.user_id} onClick={()=>removeMember(m)}><Trash2 size={15}/></button></div>}</td>
         </tr>
       ); })}</tbody>
     </table></div><Pager t={mt}/></>}
 
-    <div className="settings-divider"/>
-    <div className="panel-head"><div><h4>Custom roles</h4><p>Build a role with its own granular permissions per resource, beyond the built-in Viewer/Operator/Admin roles.</p></div>
-      <button className="secondary-action" onClick={()=>setEditingRole('new')}><Plus size={15}/>Create role</button></div>
-    {!loading && !roles.length ? <p className="muted">No custom roles yet. Create one to assign fine-grained permissions to a teammate.</p> : <><div className="table-wrap"><table>
-      <thead><tr><Th t={rt} k="name">ROLE</Th><th>ACTIONS</th></tr></thead>
-      <tbody>{rt.rows.map(r => (
-        <tr key={r.id}>
-          <td>{r.name}</td>
-          <td><div className="row-actions"><button className="secondary-action sm" disabled={busyId===r.id} onClick={()=>setEditingRole(r)}><Pencil size={14}/>Edit</button><button className="danger-action sm" disabled={busyId===r.id} onClick={()=>removeRole(r)}><Trash2 size={14}/>Delete</button></div></td>
-        </tr>
-      ))}</tbody>
-    </table></div><Pager t={rt}/></>}
-
     {inviting && <InviteModal organizationId={organizationId} accessToken={accessToken} canGrantAdmin={role==='owner'} customRoles={roles} onDone={inviteDone} onClose={()=>setInviting(false)}/>}
     {editingMember && <PermissionsModal member={editingMember} canGrantAdmin={role==='owner'} busy={busyId===editingMember.user_id} customRoles={roles} onSave={(newRole)=>changeRole(editingMember, newRole)} onClose={()=>setEditingMember(null)}/>}
+    {managingRoles && <Drawer title="Custom roles" onClose={()=>setManagingRoles(false)}>
+      <p className="muted" style={{marginTop:0}}>A custom role is a named set of per-resource permissions. Assign it to anyone from their row in the Team list.</p>
+      <button className="primary-action" style={{marginBottom:16}} onClick={()=>setEditingRole('new')}><Plus size={15}/>Create role</button>
+      {!loading && !roles.length ? <p className="muted">No custom roles yet. Create one to assign fine-grained permissions to a teammate.</p> : <><div className="table-wrap"><table>
+        <thead><tr><Th t={rt} k="name">ROLE</Th><th>ACTIONS</th></tr></thead>
+        <tbody>{rt.rows.map(r => (
+          <tr key={r.id}>
+            <td>{r.name}</td>
+            <td><div className="row-actions"><button className="secondary-action sm" disabled={busyId===r.id} onClick={()=>setEditingRole(r)}><Pencil size={14}/>Edit</button><button className="danger-action sm" disabled={busyId===r.id} onClick={()=>removeRole(r)}><Trash2 size={14}/>Delete</button></div></td>
+          </tr>
+        ))}</tbody>
+      </table></div><Pager t={rt}/></>}
+    </Drawer>}
     {editingRole && <CustomRoleModal role={editingRole==='new'?null:editingRole} busy={!!busyId} onSave={(name,perms)=>saveRole(name, perms, editingRole==='new'?undefined:editingRole.id)} onClose={()=>setEditingRole(null)}/>}
   </section>;
 }
@@ -580,9 +581,9 @@ function InviteModal({organizationId,accessToken,canGrantAdmin,customRoles,onDon
     finally { setBusy(false); }
   };
   return <Modal title="Invite member" subtitle="Choose the access they'll have" icon={<UserRound size={17}/>} onClose={onClose}>
-    <form onSubmit={invite}>
+    <form className="modal-form" onSubmit={invite}>
       <label>Email<input type="email" value={email} onChange={e=>setEmail(e.target.value)} placeholder="colleague@company.com" required/></label>
-      <div className="permission-list" style={{marginTop:14}}>{options.map(o => (
+      <div className="permission-list">{options.map(o => (
         <label key={o.value} className="permission-row">
           <input type="checkbox" checked={picked===o.value} onChange={()=>setPicked(o.value)}/>
           <span><b>{o.label}</b><small>{o.desc}</small></span>

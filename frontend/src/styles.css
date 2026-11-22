@@ -174,6 +174,7 @@ tr:hover td{background:#1e1e1f}
 .network-row{border-color:#2f2f30}
 .settings-icon{background:#302015;color:#ff995c}
 .role-badge.owner{background:#1f1f20;color:#7ad794}
+.role-badge.custom{background:#2a2540;color:#b4a1ff}
 .owner-note{background:#1c1c1d;border-color:#3b3b3c;color:#74d58e}
 .owner-note b{color:#c9efd3}.owner-note small{color:#9fc5aa}
 .enrollment-token,.token-result{background:#161617;border-color:#3b3028}
@@ -317,7 +318,7 @@ td{font-size:13px}th{font-size:12px}.muted{font-size:12px}.panel-head p,.page-he
 .row-actions .mini-icon.danger{color:#f0a2a9}
 .row-actions .mini-icon.danger:hover{background:#351e2a;border-color:#713b48}
 .permission-list{display:flex;flex-direction:column;gap:3px;margin-bottom:20px}
-.permission-row{display:flex;align-items:flex-start;gap:11px;padding:11px 10px;border-radius:8px;cursor:pointer}
+.permission-row{display:flex;flex-direction:row;align-items:flex-start;gap:11px;padding:11px 10px;border-radius:8px;cursor:pointer}
 .permission-row:hover{background:#2a2a2b}
 .permission-row input{margin-top:3px;width:16px;height:16px;accent-color:#398ce9;flex-shrink:0}
 .permission-row b{display:block;font-size:13px;color:#e2eaf6}
