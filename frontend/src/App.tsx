@@ -1,5 +1,5 @@
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Activity, Pencil, Bell, Boxes, Cable, ChevronDown, CircleHelp, LayoutDashboard, LogOut, Network, Search, Settings, ShieldCheck, ScrollText, Globe2, FileBarChart, ClipboardList, Gauge, MonitorUp, Zap, LockKeyhole, Eye, EyeOff, MapPin, Server, ArrowUpRight, UserRound, KeyRound, Sun, Moon, Languages, MoreHorizontal, Building2, Check, Plus, Trash2, RefreshCw, Layers } from 'lucide-react';
+import { Activity, Pencil, Users, Bell, Boxes, Cable, ChevronDown, CircleHelp, LayoutDashboard, LogOut, Network, Search, Settings, ShieldCheck, ScrollText, Globe2, FileBarChart, ClipboardList, Gauge, MonitorUp, Zap, LockKeyhole, Eye, EyeOff, MapPin, Server, ArrowUpRight, UserRound, KeyRound, Sun, Moon, Languages, MoreHorizontal, Building2, Check, Plus, Trash2, RefreshCw, Layers } from 'lucide-react';
 import type { Session, User } from '@supabase/supabase-js';
 
 type Device = { id: string; hostname: string; ip_address: string | null; status: string; device_type: string | null; last_seen_at: string | null; site_id?: string; archived_at?: string | null; agent_version?: string | null; parent_device_id?: string | null; os_name?: string | null };
@@ -479,9 +479,24 @@ type CustomRole = { id: string; name: string; created_at: string; permissions: R
 function emptyPermissions(): RolePermission[] {
   return PERMISSION_RESOURCES.map(r => ({ resource: r.value, can_view: false, can_create: false, can_edit: false, can_delete: false }));
 }
-// Members and custom roles live together here: a role picked for a member (built-in or
-// custom) always comes from the same list this section keeps, so "what access am I giving
-// them" is answered by the role list right here, not a separate screen.
+const PERM_KEYS: { key: keyof Omit<RolePermission,'resource'>; label: string }[] = [{ key: 'can_view', label: 'View' }, { key: 'can_create', label: 'Create' }, { key: 'can_edit', label: 'Edit' }, { key: 'can_delete', label: 'Delete' }];
+const BUILTIN_SUMMARY: Record<string, string[]> = {
+  owner: ['Everything', 'Billing and workspace deletion'],
+  admin: ['Everything except deleting the workspace', 'Team and settings'],
+  operator: ['View everything', 'Manage devices, checks and maintenance'],
+  viewer: ['View dashboards, devices and alerts'],
+};
+// One sentence per resource a custom role can touch, e.g. "Devices: view, edit".
+function permSummary(perms: RolePermission[]): string[] {
+  return perms.filter(p => p.can_view || p.can_create || p.can_edit || p.can_delete).map(p => {
+    const label = PERMISSION_RESOURCES.find(r => r.value === p.resource)?.label ?? p.resource;
+    const all = p.can_view && p.can_create && p.can_edit && p.can_delete;
+    return `${label}: ${all ? 'full access' : PERM_KEYS.filter(k => p[k.key]).map(k => k.label.toLowerCase()).join(', ')}`;
+  });
+}
+const initials = (email: string) => (email.split('@')[0].replace(/[^a-z0-9]/gi, ' ').trim().split(/\s+/).map(w => w[0]).join('').slice(0, 2) || email[0] || '?').toUpperCase();
+
+// Team = members (with invite) + roles & permissions, two sections on one tab.
 function TeamManagement({organizationId,role,accessToken,currentUserId}:{organizationId:string;role:Membership['role'];accessToken:string;currentUserId:string}) {
   const [members,setMembers]=useState<TeamMember[]>([]); const [roles,setRoles]=useState<CustomRole[]>([]);
   const [loading,setLoading]=useState(true); const [error,setError]=useState('');
@@ -489,8 +504,7 @@ function TeamManagement({organizationId,role,accessToken,currentUserId}:{organiz
   const [editingMember,setEditingMember]=useState<TeamMember|null>(null);
   const [editingRole,setEditingRole]=useState<CustomRole|'new'|null>(null);
   const [inviting,setInviting]=useState(false);
-  const [managingRoles,setManagingRoles]=useState(false);
-  if (!['owner','admin'].includes(role)) return null;
+  const rolesRef = useRef<HTMLElement>(null);
   const load = useCallback(async () => {
     setLoading(true); setError('');
     try {
@@ -502,7 +516,9 @@ function TeamManagement({organizationId,role,accessToken,currentUserId}:{organiz
     } catch (e) { setError(e instanceof Error ? e.message : 'Could not load the team.'); }
     finally { setLoading(false); }
   }, [organizationId, accessToken]);
-  useEffect(() => { void load(); }, [load]);
+  useEffect(() => { if (['owner','admin'].includes(role)) void load(); }, [load, role]);
+  const mt = useTable(members, (m,k)=>k==='role'?(m.role==='custom'?(m.custom_role_name||'Custom'):m.role):(m as any)[k]);
+  if (!['owner','admin'].includes(role)) return null;
   const changeRole = async (m: TeamMember, newRole: string) => {
     if (newRole === m.role || newRole === m.custom_role_id) { setEditingMember(null); return; }
     setBusyId(m.user_id); setError('');
@@ -518,7 +534,6 @@ function TeamManagement({organizationId,role,accessToken,currentUserId}:{organiz
     catch (e) { setError(e instanceof Error ? e.message : 'Could not remove that member.'); }
     finally { setBusyId(''); }
   };
-  const inviteDone = async () => { setInviting(false); await load(); };
   const saveRole = async (name: string, permissions: RolePermission[], roleId?: string) => {
     setBusyId(roleId || 'new'); setError('');
     try {
@@ -529,95 +544,98 @@ function TeamManagement({organizationId,role,accessToken,currentUserId}:{organiz
     finally { setBusyId(''); }
   };
   const removeRole = async (r: CustomRole) => {
-    const ok = await confirmDialog(`Delete the "${r.name}" role?`, { confirmText: 'Delete', danger: true });
+    const used = members.filter(m => m.custom_role_id === r.id).length;
+    const ok = await confirmDialog(used ? `Delete the "${r.name}" role? ${used} member${used === 1 ? '' : 's'} using it will need a new role.` : `Delete the "${r.name}" role?`, { confirmText: 'Delete', danger: true });
     if (!ok) return;
     setBusyId(r.id); setError('');
     try { await api(`/team/roles/${r.id}?organization_id=${organizationId}`, accessToken, { method: 'DELETE' }); toast('Role deleted'); await load(); }
     catch (e) { setError(e instanceof Error ? e.message : 'Could not delete that role.'); }
     finally { setBusyId(''); }
   };
-  const mt = useTable(members, (m,k)=>k==='role'?(m.role==='custom'?(m.custom_role_name||'Custom'):m.role):(m as any)[k]);
-  const rt = useTable(roles, (r,k)=>(r as any)[k]);
-  return <section className="panel settings-card">
-    <div className="panel-head"><div><div className="settings-icon"><UserRound size={19}/></div><h3>Team</h3><p>Everyone with access to this workspace. Roles decide what each person can do — pick a built-in role or a custom one you've built.</p></div>
-      <div className="row-actions"><button className="secondary-action" onClick={()=>setManagingRoles(true)}><ShieldCheck size={15}/>Manage roles{roles.length?` (${roles.length})`:''}</button><button className="primary-action" onClick={()=>setInviting(true)}><Plus size={15}/>Invite member</button></div></div>
-    <Flash kind="error" msg={error}/>
-    {loading ? <Skeleton rows={3}/> : !members.length ? <EmptyState icon={<UserRound size={22}/>} title="No members yet" text="Invite someone to get started."/> : <><div className="table-wrap"><table>
-      <thead><tr><Th t={mt} k="email">EMAIL</Th><Th t={mt} k="role">ROLE</Th><th>ACTIONS</th></tr></thead>
-      <tbody>{mt.rows.map(m => { const self = m.user_id === currentUserId; const canEditThis = role === 'owner' || !['owner','admin'].includes(m.role); return (
-        <tr key={m.user_id}>
-          <td>{m.email}{self ? ' (you)' : ''}</td>
-          <td><span className={m.role==='owner'?'role-badge owner':m.role==='custom'?'role-badge custom':'role-badge'}>{m.role==='custom'?(m.custom_role_name||'Custom'):m.role}</span></td>
-          <td>{!self && canEditThis && <div className="row-actions"><button className="mini-icon" title="Edit permissions" disabled={busyId===m.user_id} onClick={()=>setEditingMember(m)}><Pencil size={15}/></button><button className="mini-icon danger" title="Remove member" disabled={busyId===m.user_id} onClick={()=>removeMember(m)}><Trash2 size={15}/></button></div>}</td>
-        </tr>
-      ); })}</tbody>
-    </table></div><Pager t={mt}/></>}
-
-    {inviting && <InviteModal organizationId={organizationId} accessToken={accessToken} canGrantAdmin={role==='owner'} customRoles={roles} onDone={inviteDone} onClose={()=>setInviting(false)}/>}
-    {editingMember && <PermissionsModal member={editingMember} canGrantAdmin={role==='owner'} busy={busyId===editingMember.user_id} customRoles={roles} onSave={(newRole)=>changeRole(editingMember, newRole)} onClose={()=>setEditingMember(null)}/>}
-    {managingRoles && <Drawer title="Custom roles" onClose={()=>setManagingRoles(false)}>
-      <p className="muted" style={{marginTop:0}}>A custom role is a named set of per-resource permissions. Assign it to anyone from their row in the Team list.</p>
-      <button className="primary-action" style={{marginBottom:16}} onClick={()=>setEditingRole('new')}><Plus size={15}/>Create role</button>
-      {!loading && !roles.length ? <p className="muted">No custom roles yet. Create one to assign fine-grained permissions to a teammate.</p> : <><div className="table-wrap"><table>
-        <thead><tr><Th t={rt} k="name">ROLE</Th><th>ACTIONS</th></tr></thead>
-        <tbody>{rt.rows.map(r => (
-          <tr key={r.id}>
-            <td>{r.name}</td>
-            <td><div className="row-actions"><button className="secondary-action sm" disabled={busyId===r.id} onClick={()=>setEditingRole(r)}><Pencil size={14}/>Edit</button><button className="danger-action sm" disabled={busyId===r.id} onClick={()=>removeRole(r)}><Trash2 size={14}/>Delete</button></div></td>
+  const countFor = (key: string) => members.filter(m => (m.role === 'custom' ? m.custom_role_id : m.role) === key).length;
+  const roleLabel = (m: TeamMember) => m.role === 'custom' ? (m.custom_role_name || 'Custom') : m.role;
+  return <>
+    <section className="panel page-panel team-card">
+      <div className="panel-head"><div className="head-with-icon"><span className="head-icon"><Users size={18}/></span><div><h3>Team</h3><p>{loading ? 'Loading…' : `${members.length} member${members.length === 1 ? '' : 's'}`} · Everyone with access to this workspace.</p></div></div>
+        <button className="primary-action" onClick={()=>setInviting(true)}><Plus size={16}/>Invite member</button></div>
+      <Flash kind="error" msg={error}/>
+      {loading ? <div className="panel-pad"><Skeleton rows={3}/></div> : !members.length ? <EmptyState icon={<UserRound size={22}/>} title="No members yet" text="Invite someone to get started."/> : <><div className="table-wrap"><table>
+        <thead><tr><Th t={mt} k="email">MEMBER</Th><Th t={mt} k="role">ROLE</Th><th>JOINED</th><th>ACTIONS</th></tr></thead>
+        <tbody>{mt.rows.map(m => { const self = m.user_id === currentUserId; const canEditThis = !self && m.role !== 'owner' && (role === 'owner' || m.role !== 'admin'); return (
+          <tr key={m.user_id}>
+            <td><div className="member-cell"><span className={m.role === 'owner' ? 'member-av owner' : 'member-av'}>{initials(m.email)}</span><div><b>{m.email}</b>{self && <small>You</small>}</div></div></td>
+            <td><span className={`role-badge ${m.role}`}>{roleLabel(m)}</span></td>
+            <td className="muted">{m.created_at ? new Date(m.created_at).toLocaleDateString() : '—'}</td>
+            <td>{canEditThis ? <div className="row-actions"><button className="secondary-action sm" disabled={busyId===m.user_id} onClick={()=>setEditingMember(m)}><KeyRound size={14}/>Change role</button><button className="icon-only danger" aria-label={`Remove ${m.email}`} title="Remove member" disabled={busyId===m.user_id} onClick={()=>removeMember(m)}><Trash2 size={15}/></button></div> : <span className="muted cell-note">{self ? 'That’s you' : 'Owner'}</span>}</td>
           </tr>
-        ))}</tbody>
-      </table></div><Pager t={rt}/></>}
-    </Drawer>}
+        ); })}</tbody>
+      </table></div><Pager t={mt}/></>}
+    </section>
+
+    <section className="panel page-panel roles-card" ref={rolesRef}>
+      <div className="panel-head"><div className="head-with-icon"><span className="head-icon"><ShieldCheck size={18}/></span><div><h3>Roles &amp; permissions</h3><p>What each role can do. Built-in roles are fixed; custom roles let you choose access per area.</p></div></div>
+        <button className="secondary-action" onClick={()=>setEditingRole('new')}><Plus size={16}/>Create role</button></div>
+      <div className="roles-grid">
+        {(['owner','admin','operator','viewer'] as const).map(k => <article key={k} className="role-tile builtin">
+          <header><span className={`role-badge ${k}`}>{k}</span><span className="role-count">{countFor(k)} member{countFor(k) === 1 ? '' : 's'}</span></header>
+          <ul>{BUILTIN_SUMMARY[k].map(s => <li key={s}><Check size={13}/>{s}</li>)}</ul>
+          <footer><span className="muted">Built-in · can’t be changed</span></footer>
+        </article>)}
+        {roles.map(r => { const sum = permSummary(r.permissions); return <article key={r.id} className="role-tile custom">
+          <header><span className="role-badge custom">{r.name}</span><span className="role-count">{countFor(r.id)} member{countFor(r.id) === 1 ? '' : 's'}</span></header>
+          {sum.length ? <ul>{sum.slice(0, 4).map(s => <li key={s}><Check size={13}/>{s}</li>)}{sum.length > 4 && <li className="more">+{sum.length - 4} more</li>}</ul> : <p className="muted role-empty">No permissions yet — this role can’t see anything.</p>}
+          <footer><button className="secondary-action sm" disabled={busyId===r.id} onClick={()=>setEditingRole(r)}><Pencil size={14}/>Edit permissions</button><button className="icon-only danger" aria-label={`Delete role ${r.name}`} title="Delete role" disabled={busyId===r.id} onClick={()=>removeRole(r)}><Trash2 size={15}/></button></footer>
+        </article>; })}
+        <button className="role-tile add" onClick={()=>setEditingRole('new')}><Plus size={20}/><b>Create a custom role</b><span>Pick exactly what someone can view, create, edit or delete.</span></button>
+      </div>
+    </section>
+
+    {inviting && <InviteModal organizationId={organizationId} accessToken={accessToken} canGrantAdmin={role==='owner'} customRoles={roles} onCreateRole={()=>{ setInviting(false); setEditingRole('new'); }} onDone={async()=>{ setInviting(false); await load(); }} onClose={()=>setInviting(false)}/>}
+    {editingMember && <PermissionsModal member={editingMember} canGrantAdmin={role==='owner'} busy={busyId===editingMember.user_id} customRoles={roles} onSave={(newRole)=>changeRole(editingMember, newRole)} onClose={()=>setEditingMember(null)}/>}
     {editingRole && <CustomRoleModal role={editingRole==='new'?null:editingRole} busy={!!busyId} onSave={(name,perms)=>saveRole(name, perms, editingRole==='new'?undefined:editingRole.id)} onClose={()=>setEditingRole(null)}/>}
-  </section>;
+  </>;
 }
-function InviteModal({organizationId,accessToken,canGrantAdmin,customRoles,onDone,onClose}:{organizationId:string;accessToken:string;canGrantAdmin:boolean;customRoles:CustomRole[];onDone:()=>void;onClose:()=>void}) {
-  const [email,setEmail]=useState(''); const [picked,setPicked]=useState('viewer'); const [busy,setBusy]=useState(false); const [error,setError]=useState('');
+// Role picker shared by Invite and Change role: radio cards, built-in first, then custom.
+function RolePicker({value,onChange,canGrantAdmin,customRoles,onCreateRole}:{value:string;onChange:(v:string)=>void;canGrantAdmin:boolean;customRoles:CustomRole[];onCreateRole?:()=>void}) {
   const options = ROLE_OPTIONS.filter(o => o.value !== 'admin' || canGrantAdmin);
+  const card = (id: string, title: string, desc: string, custom = false) => <label key={id} className={value === id ? 'role-option on' : 'role-option'}>
+    <input type="radio" name="role-pick" checked={value === id} onChange={() => onChange(id)}/>
+    <span className="role-option-dot" aria-hidden="true"/>
+    <span className="role-option-body"><b>{title}{custom && <em>Custom</em>}</b><small>{desc}</small></span>
+  </label>;
+  return <fieldset className="role-picker"><legend>Role</legend>
+    <p className="role-group">Built-in</p>
+    {options.map(o => card(o.value, o.label, o.desc))}
+    <p className="role-group">Custom{!customRoles.length && <span> · none yet</span>}</p>
+    {customRoles.map(cr => { const sum = permSummary(cr.permissions); return card(cr.id, cr.name, sum.length ? sum.slice(0, 2).join(' · ') + (sum.length > 2 ? ` · +${sum.length - 2} more` : '') : 'No permissions yet.', true); })}
+    {onCreateRole && <button type="button" className="text-button role-create" onClick={onCreateRole}><Plus size={14}/>Create a custom role</button>}
+  </fieldset>;
+}
+function InviteModal({organizationId,accessToken,canGrantAdmin,customRoles,onCreateRole,onDone,onClose}:{organizationId:string;accessToken:string;canGrantAdmin:boolean;customRoles:CustomRole[];onCreateRole:()=>void;onDone:()=>void;onClose:()=>void}) {
+  const [email,setEmail]=useState(''); const [picked,setPicked]=useState('viewer'); const [busy,setBusy]=useState(false); const [error,setError]=useState('');
   const invite = async (e: FormEvent) => {
     e.preventDefault(); setBusy(true); setError('');
     try { const r = await api<{email:string}>('/team/invite', accessToken, { method: 'POST', body: { organization_id: organizationId, email: email.trim(), role: picked } }); toast('Invitation sent to '+r.email); onDone(); }
     catch (e) { setError(e instanceof Error ? e.message : 'Invitation failed.'); }
     finally { setBusy(false); }
   };
-  return <Modal title="Invite member" subtitle="Choose the access they'll have" icon={<UserRound size={17}/>} onClose={onClose}>
+  return <Modal title="Invite member" subtitle="They'll get an email with a link to join this workspace." icon={<UserRound size={18}/>} onClose={onClose} width={520}>
     <form className="modal-form" onSubmit={invite}>
-      <label>Email<input type="email" value={email} onChange={e=>setEmail(e.target.value)} placeholder="colleague@company.com" required/></label>
-      <div className="permission-list">{options.map(o => (
-        <label key={o.value} className="permission-row">
-          <input type="checkbox" checked={picked===o.value} onChange={()=>setPicked(o.value)}/>
-          <span><b>{o.label}</b><small>{o.desc}</small></span>
-        </label>
-      ))}
-      {customRoles.map(cr => (
-        <label key={cr.id} className="permission-row">
-          <input type="checkbox" checked={picked===cr.id} onChange={()=>setPicked(cr.id)}/>
-          <span><b>{cr.name}</b><small>Custom role with its own set of permissions.</small></span>
-        </label>
-      ))}</div>
+      <label>Email<input type="email" autoFocus value={email} onChange={e=>setEmail(e.target.value)} placeholder="colleague@company.com" required/></label>
+      <RolePicker value={picked} onChange={setPicked} canGrantAdmin={canGrantAdmin} customRoles={customRoles} onCreateRole={onCreateRole}/>
       <Flash kind="error" msg={error}/>
       <div className="modal-actions"><button type="button" className="secondary-action" onClick={onClose} disabled={busy}>Cancel</button><button className="primary-action" disabled={busy || !email.trim()}>{busy?'Sending…':'Send invitation'}</button></div>
     </form>
   </Modal>;
 }
 function PermissionsModal({member,canGrantAdmin,busy,customRoles,onSave,onClose}:{member:TeamMember;canGrantAdmin:boolean;busy:boolean;customRoles:CustomRole[];onSave:(role:string)=>void;onClose:()=>void}) {
-  const [picked,setPicked]=useState<string>(member.role==='custom'?(member.custom_role_id||''):member.role);
-  const options = ROLE_OPTIONS.filter(o => o.value !== 'admin' || canGrantAdmin);
   const current = member.role==='custom' ? (member.custom_role_id||'') : member.role;
-  return <Modal title="Manage permissions" subtitle={member.email} icon={<KeyRound size={17}/>} onClose={onClose}>
-    <div className="permission-list">{options.map(o => (
-      <label key={o.value} className="permission-row">
-        <input type="checkbox" checked={picked===o.value} onChange={()=>setPicked(o.value)}/>
-        <span><b>{o.label}</b><small>{o.desc}</small></span>
-      </label>
-    ))}
-    {customRoles.map(cr => (
-      <label key={cr.id} className="permission-row">
-        <input type="checkbox" checked={picked===cr.id} onChange={()=>setPicked(cr.id)}/>
-        <span><b>{cr.name}</b><small>Custom role with its own set of permissions.</small></span>
-      </label>
-    ))}</div>
-    <div className="modal-actions"><button className="secondary-action" onClick={onClose} disabled={busy}>Cancel</button><button className="primary-action" onClick={()=>onSave(picked)} disabled={busy || !picked || picked===current}>{busy?'Saving…':'Save changes'}</button></div>
+  const [picked,setPicked]=useState<string>(current);
+  return <Modal title="Change role" subtitle={member.email} icon={<KeyRound size={18}/>} onClose={onClose} width={520}>
+    <div className="modal-form">
+      <RolePicker value={picked} onChange={setPicked} canGrantAdmin={canGrantAdmin} customRoles={customRoles}/>
+      <div className="modal-actions"><button type="button" className="secondary-action" onClick={onClose} disabled={busy}>Cancel</button><button type="button" className="primary-action" onClick={()=>onSave(picked)} disabled={busy || !picked || picked===current}>{busy?'Saving…':'Save role'}</button></div>
+    </div>
   </Modal>;
 }
 function CustomRoleModal({role,busy,onSave,onClose}:{role:CustomRole|null;busy:boolean;onSave:(name:string,permissions:RolePermission[])=>void;onClose:()=>void}) {
@@ -627,30 +645,31 @@ function CustomRoleModal({role,busy,onSave,onClose}:{role:CustomRole|null;busy:b
     if (!role) return base;
     return base.map(p => role.permissions.find(rp => rp.resource === p.resource) || p);
   });
-  const toggle = (resource: string, key: keyof Omit<RolePermission,'resource'>) => {
-    setPerms(prev => prev.map(p => p.resource === resource ? { ...p, [key]: !p[key] } : p));
-  };
-  const setAll = (resource: string, value: boolean) => {
-    setPerms(prev => prev.map(p => p.resource === resource ? { ...p, can_view: value, can_create: value, can_edit: value, can_delete: value } : p));
-  };
-  return <Modal title={role ? 'Edit role' : 'Create role'} subtitle={role?.name} icon={<ShieldCheck size={17}/>} onClose={onClose}>
-    <label>Role name<input type="text" value={name} onChange={e=>setName(e.target.value)} placeholder="e.g. Field technician" maxLength={80}/></label>
-    <div className="table-wrap" style={{marginTop:14}}><table>
-      <thead><tr><th>RESOURCE</th><th>VIEW</th><th>CREATE</th><th>EDIT</th><th>DELETE</th><th></th></tr></thead>
-      <tbody>{PERMISSION_RESOURCES.map(res => {
-        const p = perms.find(x => x.resource === res.value)!;
-        const all = p.can_view && p.can_create && p.can_edit && p.can_delete;
-        return <tr key={res.value}>
-          <td>{res.label}</td>
-          <td><input type="checkbox" checked={p.can_view} onChange={()=>toggle(res.value,'can_view')}/></td>
-          <td><input type="checkbox" checked={p.can_create} onChange={()=>toggle(res.value,'can_create')}/></td>
-          <td><input type="checkbox" checked={p.can_edit} onChange={()=>toggle(res.value,'can_edit')}/></td>
-          <td><input type="checkbox" checked={p.can_delete} onChange={()=>toggle(res.value,'can_delete')}/></td>
-          <td><button type="button" className="secondary-action sm" onClick={()=>setAll(res.value, !all)}>{all?'Deselect all':'Select all'}</button></td>
-        </tr>;
-      })}</tbody>
-    </table></div>
-    <div className="modal-actions"><button className="secondary-action" onClick={onClose} disabled={busy}>Cancel</button><button className="primary-action" onClick={()=>onSave(name.trim(), perms)} disabled={busy || !name.trim()}>{busy?'Saving…':'Save role'}</button></div>
+  const toggle = (resource: string, key: keyof Omit<RolePermission,'resource'>) => setPerms(prev => prev.map(p => {
+    if (p.resource !== resource) return p;
+    const next = { ...p, [key]: !p[key] };
+    if (key !== 'can_view' && next[key]) next.can_view = true;            // create/edit/delete imply view
+    if (key === 'can_view' && !next.can_view) { next.can_create = next.can_edit = next.can_delete = false; }
+    return next;
+  }));
+  const setRow = (resource: string, value: boolean) => setPerms(prev => prev.map(p => p.resource === resource ? { ...p, can_view: value, can_create: value, can_edit: value, can_delete: value } : p));
+  const setCol = (key: keyof Omit<RolePermission,'resource'>, value: boolean) => setPerms(prev => prev.map(p => { const n = { ...p, [key]: value }; if (value && key !== 'can_view') n.can_view = true; if (!value && key === 'can_view') { n.can_create = n.can_edit = n.can_delete = false; } return n; }));
+  const colAll = (key: keyof Omit<RolePermission,'resource'>) => perms.every(p => p[key]);
+  const granted = permSummary(perms).length;
+  return <Modal title={role ? 'Edit role' : 'Create role'} subtitle="Choose what this role can do in each area. Create, edit and delete include view." icon={<ShieldCheck size={18}/>} onClose={onClose} width={720}>
+    <div className="modal-form">
+      <label>Role name<input type="text" autoFocus value={name} onChange={e=>setName(e.target.value)} placeholder="Field technician" maxLength={80}/></label>
+      <div className="perm-matrix" role="table" aria-label="Permissions">
+        <div className="perm-row head" role="row"><span role="columnheader">Area</span>{PERM_KEYS.map(k => <button key={k.key} type="button" role="columnheader" className={colAll(k.key) ? 'perm-col on' : 'perm-col'} title={`${colAll(k.key) ? 'Clear' : 'Allow'} ${k.label.toLowerCase()} everywhere`} onClick={() => setCol(k.key, !colAll(k.key))}>{k.label}</button>)}<span role="columnheader" className="sr-only">Row</span></div>
+        {PERMISSION_RESOURCES.map(res => { const p = perms.find(x => x.resource === res.value)!; const all = p.can_view && p.can_create && p.can_edit && p.can_delete; return <div key={res.value} className="perm-row" role="row">
+          <span role="rowheader">{res.label}</span>
+          {PERM_KEYS.map(k => <label key={k.key} className="perm-cell" role="cell"><input type="checkbox" checked={p[k.key]} onChange={() => toggle(res.value, k.key)} aria-label={`${k.label} ${res.label}`}/><span className="perm-box" aria-hidden="true"><Check size={13}/></span></label>)}
+          <button type="button" className="text-button perm-all" onClick={() => setRow(res.value, !all)}>{all ? 'Clear' : 'All'}</button>
+        </div>; })}
+      </div>
+      <p className="muted perm-foot">{granted ? `Access in ${granted} of ${PERMISSION_RESOURCES.length} areas.` : 'Nothing selected yet — this role would see nothing.'}</p>
+      <div className="modal-actions"><button type="button" className="secondary-action" onClick={onClose} disabled={busy}>Cancel</button><button type="button" className="primary-action" onClick={()=>onSave(name.trim(), perms)} disabled={busy || !name.trim()}>{busy?'Saving…':role?'Save role':'Create role'}</button></div>
+    </div>
   </Modal>;
 }
 

@@ -1247,3 +1247,98 @@ th{background:rgba(255,255,255,.025)!important}
 .fx-floor{background-image:linear-gradient(rgba(255,255,255,.055) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.055) 1px,transparent 1px)!important;opacity:1!important}
 .fx-horizon{background:linear-gradient(90deg,transparent,rgba(255,255,255,.14),transparent)!important;box-shadow:0 0 30px 6px rgba(255,255,255,.03)!important}
 @media(max-width:650px){.fx-floor{opacity:.7!important}}
+
+/* v2.5 — Team & roles */
+.head-with-icon{display:flex;align-items:flex-start;gap:14px;min-width:0}
+.head-with-icon>div{min-width:0}
+.head-icon{width:38px;height:38px;flex:0 0 38px;display:grid;place-items:center;border-radius:11px;background:rgba(245,99,15,.13);color:#ff9a5c;box-shadow:inset 0 0 0 1px rgba(245,99,15,.22)}
+.team-card .panel-head h3,.roles-card .panel-head h3{margin:1px 0 4px}
+.team-card .panel-head p,.roles-card .panel-head p{margin:0}
+.panel-pad{padding:18px 24px}
+.member-cell{display:flex;align-items:center;gap:12px;min-width:0}
+.member-cell>div{min-width:0;display:flex;align-items:center;gap:8px}
+.member-cell b{font-weight:500;color:#fff;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.member-cell small{padding:2px 8px;border-radius:999px;background:rgba(255,255,255,.06);color:var(--muted2);font-size:11px;font-weight:600}
+.member-av{width:34px;height:34px;flex:0 0 34px;display:grid;place-items:center;border-radius:50%;background:rgba(255,255,255,.07);color:#d7d7dc;font:700 12px 'DM Sans',sans-serif;letter-spacing:.5px}
+.member-av.owner{background:linear-gradient(135deg,#ff9a4d,#f5630f);color:#fff}
+.role-badge{display:inline-flex;align-items:center;height:26px;padding:0 11px;border-radius:999px;font-size:12px;font-weight:600;text-transform:capitalize;white-space:nowrap;background:rgba(255,255,255,.07)!important;color:#d7d7dc!important}
+.role-badge.owner{background:rgba(245,99,15,.15)!important;color:#ffb27f!important}
+.role-badge.admin{background:rgba(96,165,250,.13)!important;color:#93c5fd!important}
+.role-badge.operator{background:rgba(52,211,153,.12)!important;color:#6ee7b7!important}
+.role-badge.viewer{background:rgba(255,255,255,.07)!important;color:#c4c4cb!important}
+.role-badge.custom{background:rgba(167,139,250,.14)!important;color:#c4b5fd!important;text-transform:none}
+.icon-only{width:34px;height:34px;display:inline-grid;place-items:center;border-radius:10px;border:1px solid var(--stroke-2);background:rgba(255,255,255,.03);color:var(--muted2);cursor:pointer;transition:background .15s,color .15s,border-color .15s}
+.icon-only:hover:not(:disabled){background:rgba(255,255,255,.07);color:#fff}
+.icon-only.danger:hover:not(:disabled){background:rgba(251,113,133,.12);border-color:rgba(251,113,133,.35);color:#fda4af}
+.icon-only:disabled{opacity:.45;cursor:default}
+.cell-note{font-size:12px}
+.team-card td .row-actions{align-items:center}
+.roles-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px;padding:18px 24px 22px}
+.role-tile{position:relative;display:flex;flex-direction:column;gap:12px;min-height:170px;padding:16px;border-radius:16px;background:rgba(255,255,255,.025);border:1px solid var(--glass-line);text-align:start;color:inherit;font:inherit}
+.role-tile header{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.role-count{color:var(--muted3);font-size:12px;white-space:nowrap}
+.role-tile ul{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:7px;flex:1}
+.role-tile li{display:flex;align-items:flex-start;gap:8px;color:#c9c9cf;font-size:13px;line-height:1.4}
+.role-tile li svg{flex-shrink:0;margin-top:2px;color:#ff9a5c}
+.role-tile li.more{color:var(--muted3);padding-left:21px}
+.role-tile.builtin li svg{color:var(--muted2)}
+.role-empty{flex:1;margin:0;font-size:13px}
+.role-tile footer{display:flex;align-items:center;justify-content:space-between;gap:8px;min-height:34px;padding-top:12px;border-top:1px solid var(--glass-line);font-size:12px}
+.role-tile.custom{border-color:rgba(167,139,250,.22)}
+.role-tile.add{align-items:center;justify-content:center;gap:6px;border-style:dashed;border-color:rgba(255,255,255,.14);background:transparent;color:var(--muted2);cursor:pointer;text-align:center;transition:border-color .2s,color .2s,background .2s}
+.role-tile.add b{color:#fff;font-weight:600}.role-tile.add span{max-width:220px;font-size:12px}
+.role-tile.add svg{color:#ff9a5c}
+.role-tile.add:hover{border-color:rgba(245,99,15,.5);background:rgba(245,99,15,.05)}
+/* role picker (invite / change role) */
+.role-picker{display:flex;flex-direction:column;gap:6px;margin:0;padding:0;border:0;min-width:0}
+.role-picker legend{padding:0;margin-bottom:6px;font-size:13px;font-weight:500;color:var(--text)}
+.role-group{margin:8px 0 2px;color:var(--muted3);font-size:11px;font-weight:700;letter-spacing:1px;text-transform:uppercase}
+.role-group span{font-weight:500;text-transform:none;letter-spacing:0}
+.modal-form label.role-option,.role-option{position:relative;display:flex!important;flex-direction:row;align-items:flex-start;gap:12px;padding:12px 14px;border-radius:12px;border:1px solid var(--glass-line);background:rgba(255,255,255,.02);cursor:pointer;transition:border-color .15s,background .15s}
+.role-option:hover{border-color:rgba(255,255,255,.18);background:rgba(255,255,255,.04)}
+.role-option.on{border-color:rgba(245,99,15,.55);background:rgba(245,99,15,.08)}
+.role-option input{position:absolute;opacity:0;pointer-events:none}
+.role-option-dot{width:18px;height:18px;flex:0 0 18px;margin-top:1px;border-radius:50%;border:2px solid rgba(255,255,255,.28);transition:border-color .15s,box-shadow .15s}
+.role-option.on .role-option-dot{border-color:#f5630f;box-shadow:inset 0 0 0 3px #121214,inset 0 0 0 9px #f5630f}
+.role-option input:focus-visible+.role-option-dot{outline:2px solid #ff9a5c;outline-offset:2px}
+.role-option-body{display:flex;flex-direction:column;gap:2px;min-width:0}
+.role-option-body b{display:flex;align-items:center;gap:8px;font-weight:600;color:#fff;font-size:14px}
+.role-option-body b em{padding:1px 7px;border-radius:999px;background:rgba(167,139,250,.14);color:#c4b5fd;font:600 10px/16px 'DM Sans',sans-serif;font-style:normal;letter-spacing:.3px}
+.role-option-body small{color:var(--muted2);font-size:12px;line-height:1.45}
+.role-create{align-self:flex-start;display:inline-flex;align-items:center;gap:6px;margin-top:4px;padding:4px 0}
+/* permission matrix */
+.perm-matrix{display:flex;flex-direction:column;border:1px solid var(--glass-line);border-radius:14px;overflow:hidden}
+.perm-row{display:grid;grid-template-columns:minmax(140px,1.4fr) repeat(4,minmax(64px,1fr)) 64px;align-items:center;min-height:46px;padding:0 14px;border-top:1px solid rgba(255,255,255,.05)}
+.perm-row:first-child{border-top:0}
+.perm-row:not(.head):hover{background:rgba(255,255,255,.025)}
+.perm-row.head{min-height:42px;background:rgba(255,255,255,.035)}
+.perm-row.head>span{color:var(--muted2);font-size:11px;font-weight:700;letter-spacing:1px;text-transform:uppercase}
+.perm-col{justify-self:center;height:28px;padding:0 10px;border:0;border-radius:8px;background:none;color:var(--muted2);font:700 11px 'DM Sans',sans-serif;letter-spacing:1px;text-transform:uppercase;cursor:pointer}
+.perm-col:hover{background:rgba(255,255,255,.06);color:#fff}.perm-col.on{color:#ff9a5c}
+.perm-row [role=rowheader]{color:#e6e6ea;font-weight:500}
+.modal-form label.perm-cell,.perm-cell{display:grid!important;place-items:center;justify-self:center;width:40px;height:40px;margin:0;cursor:pointer}
+.perm-cell input{position:absolute;opacity:0;pointer-events:none}
+.perm-box{width:20px;height:20px;display:grid;place-items:center;border-radius:6px;border:1.5px solid rgba(255,255,255,.25);color:transparent;transition:background .12s,border-color .12s,color .12s}
+.perm-cell:hover .perm-box{border-color:rgba(255,255,255,.45)}
+.perm-cell input:checked+.perm-box{background:#f5630f;border-color:#f5630f;color:#fff}
+.perm-cell input:focus-visible+.perm-box{outline:2px solid #ff9a5c;outline-offset:2px}
+.perm-all{justify-self:end;font-size:12px!important}
+.perm-foot{margin:0;font-size:12px}
+.sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
+@media(max-width:640px){.perm-row{grid-template-columns:minmax(96px,1fr) repeat(4,44px) 44px;padding:0 8px}.perm-col{padding:0 4px;font-size:10px;letter-spacing:.3px}}
+.modal-form label.role-option>span.role-option-body{display:flex;flex-direction:column;align-items:flex-start;text-align:start;gap:2px}
+.modal-form label.role-option>span.role-option-dot{display:block}
+.modal .role-group{margin:10px 0 0;font-size:11px;line-height:1.2}
+.modal .role-group:first-of-type{margin-top:0}
+.modal .role-option-body small,.modal .perm-foot{margin:0;color:var(--muted2);font-size:12px}
+.modal .role-picker>legend{margin-bottom:8px}
+@media(max-width:640px){
+.team-card th:nth-child(3),.team-card td:nth-child(3){display:none}
+.team-card th,.team-card td{padding-left:12px;padding-right:12px}
+.team-card td .secondary-action.sm{padding:0 10px}
+.perm-row{grid-template-columns:minmax(74px,1fr) repeat(4,36px) 32px;padding:0 6px}
+.perm-col{padding:0 2px;font-size:9px;letter-spacing:.2px}
+.modal-form label.perm-cell,.perm-cell{width:36px}
+.perm-all{font-size:11px!important;padding:0!important}
+.panel-pad,.roles-grid{padding-left:14px;padding-right:14px}
+}
