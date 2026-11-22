@@ -1154,6 +1154,24 @@ async function handle(req: Request): Promise<Response> {
     return json({ ...overview, api_version: API_VERSION, latest_agent_version: LATEST_AGENT_VERSION, events: events || [], notifications_7d: tally, integrations: { email: Boolean(RESEND_API_KEY), telegram: Boolean(TELEGRAM_BOT_TOKEN) } });
   }
 
+  // Lightweight member directory for assignment dropdowns (Assets/Tickets "assigned to").
+  // Any workspace member can see who else is in the workspace to assign things to them -
+  // this intentionally does not require the "team" permission, which only owners/admins have.
+  if (req.method === "GET" && path === "/org/members") {
+    const organizationId = url.searchParams.get("organization_id") || "";
+    const { user } = await requireMember(req, organizationId, ["owner", "admin", "operator", "viewer", "custom"]);
+    void user;
+    const { data: rows, error } = await admin.from("organization_members").select("user_id").eq("organization_id", organizationId);
+    if (error) return fail("Could not load members", 500);
+    const members: { user_id: string; email: string }[] = [];
+    for (const r of rows || []) {
+      const { data: u } = await admin.auth.admin.getUserById(r.user_id);
+      if (u?.user?.email) members.push({ user_id: r.user_id, email: u.user.email });
+    }
+    members.sort((a, b) => a.email.localeCompare(b.email));
+    return json({ members });
+  }
+
   // ---- Assets (Snipe-IT style inventory) -----------------------------------------------------
   if (req.method === "GET" && path === "/assets") {
     const organizationId = url.searchParams.get("organization_id") || "";
@@ -1174,6 +1192,7 @@ async function handle(req: Request): Promise<Response> {
       organization_id: organizationId, asset_tag: assetTag, name,
       category: String(body.category || "other"), status: String(body.status || "in_stock"),
       assigned_to: body.assigned_to ? String(body.assigned_to).trim() : null,
+      assigned_user_id: body.assigned_user_id || null,
       device_id: body.device_id || null, site_id: body.site_id || null,
       location: body.location ? String(body.location).trim() : null,
       vendor: body.vendor ? String(body.vendor).trim() : null,
@@ -1196,7 +1215,7 @@ async function handle(req: Request): Promise<Response> {
     const { data: existing } = await admin.from("assets").select("id").eq("id", assetId).eq("organization_id", organizationId).maybeSingle();
     if (!existing) return fail("Asset not found in this workspace", 404);
     const patch: Record<string, unknown> = { updated_at: new Date().toISOString() };
-    for (const k of ["asset_tag", "name", "category", "status", "assigned_to", "device_id", "site_id", "location", "vendor", "serial_number", "purchase_date", "warranty_expires", "notes"]) {
+    for (const k of ["asset_tag", "name", "category", "status", "assigned_to", "assigned_user_id", "device_id", "site_id", "location", "vendor", "serial_number", "purchase_date", "warranty_expires", "notes"]) {
       if (body[k] !== undefined) patch[k] = typeof body[k] === "string" ? body[k].trim() || null : body[k];
     }
     const { data, error } = await admin.from("assets").update(patch).eq("id", assetId).select("*").single();

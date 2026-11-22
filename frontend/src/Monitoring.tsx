@@ -1,13 +1,29 @@
-import { FormEvent, useCallback, useEffect, useState } from 'react';
+import { FormEvent, ReactNode, useCallback, useEffect, useState } from 'react';
 import { supabase, api, fmtBps, fmtUptime, ago, LATEST_AGENT_VERSION, SELF_UPDATE_FROM, versionAtLeast, publishedAgentVersion, type Role } from './lib';
-import { Maximize2, Pencil, Trash2, MessageSquare, Boxes } from 'lucide-react';
+import { Maximize2, Pencil, Trash2, MessageSquare, Boxes, UserCheck, Archive, CircleAlert, Clock, CheckCircle2 } from 'lucide-react';
 import { LineChart, Sparkline, type Point } from './Chart';
 import { Flash, confirmDialog, Skeleton, Select, toast, LongText, Modal, Drawer, EmptyState, useTable, Th, Pager } from './ui';
 import { Plus } from 'lucide-react';
 
 type Dev = { id: string; hostname: string; agent_version?: string | null };
+type OrgMember = { user_id: string; email: string };
 const isOp = (r: Role) => ['owner', 'admin', 'operator'].includes(r);
 const isAdmin = (r: Role) => ['owner', 'admin'].includes(r);
+// Shared assignee directory for Assets/Tickets "assigned to" dropdowns - any workspace member
+// can see who else is in the workspace (no "team" permission required, see backend /org/members).
+function useOrgMembers(organizationId: string, token: string): OrgMember[] {
+  const [members, setMembers] = useState<OrgMember[]>([]);
+  useEffect(() => {
+    let alive = true;
+    api<{ members: OrgMember[] }>(`/org/members?organization_id=${organizationId}`, token)
+      .then(r => { if (alive) setMembers(r.members); })
+      .catch(() => { /* non-fatal: assignee dropdowns just show fewer options */ });
+    return () => { alive = false; };
+  }, [organizationId, token]);
+  return members;
+}
+const StatCard = ({ icon, tone, label, value }: { icon: ReactNode; tone: 'blue' | 'green' | 'purple' | 'orange'; label: string; value: ReactNode }) =>
+  <div className="stat-card"><div className="stat-top"><span>{label}</span><span className={`stat-icon ${tone}`}>{icon}</span></div><strong>{value}</strong></div>;
 const useTick = (fn: () => void, ms: number, deps: unknown[]) => {
   useEffect(() => { fn(); const t = window.setInterval(fn, ms); return () => window.clearInterval(t); }, deps); // eslint-disable-line react-hooks/exhaustive-deps
 };
@@ -355,8 +371,9 @@ const ASSET_STATUSES = [
   { value: 'in_stock', label: 'In stock' }, { value: 'in_use', label: 'In use' },
   { value: 'repair', label: 'In repair' }, { value: 'retired', label: 'Retired' },
 ];
-type Asset = { id: string; asset_tag: string; name: string; category: string; status: string; assigned_to: string | null; device_id: string | null; site_id: string | null; location: string | null; vendor: string | null; serial_number: string | null; purchase_date: string | null; warranty_expires: string | null; notes: string | null };
+type Asset = { id: string; asset_tag: string; name: string; category: string; status: string; assigned_to: string | null; assigned_user_id: string | null; device_id: string | null; site_id: string | null; location: string | null; vendor: string | null; serial_number: string | null; purchase_date: string | null; warranty_expires: string | null; notes: string | null };
 export function AssetsPage({ organizationId, role, token, devices, sites }: { organizationId: string; role: Role; token: string; devices: Dev[]; sites: { id: string; name: string }[] }) {
+  const members = useOrgMembers(organizationId, token);
   const [rows, setRows] = useState<Asset[]>([]); const [loading, setLoading] = useState(true); const [err, setErr] = useState('');
   const [editing, setEditing] = useState<Asset | 'new' | null>(null); const [busy, setBusy] = useState('');
   const [filter, setFilter] = useState('all');
@@ -386,9 +403,20 @@ export function AssetsPage({ organizationId, role, token, devices, sites }: { or
   const list = rows.filter(a => filter === 'all' || a.status === filter);
   const t = useTable(list, (a, k) => k === 'device' ? (devices.find(d => d.id === a.device_id)?.hostname ?? '') : (a as any)[k]);
   const hostname = (id: string | null) => id ? (devices.find(d => d.id === id)?.hostname ?? '—') : '—';
+  const memberEmail = (id: string | null) => id ? (members.find(m => m.user_id === id)?.email ?? '—') : null;
+  const assigneeLabel = (a: Asset) => memberEmail(a.assigned_user_id) ?? a.assigned_to ?? '—';
   const expiring = (a: Asset) => a.warranty_expires && new Date(a.warranty_expires).getTime() - Date.now() < 30 * 86400000 && new Date(a.warranty_expires).getTime() > Date.now() - 86400000;
+  const assignedCount = rows.filter(a => a.status === 'in_use').length;
+  const inStockCount = rows.filter(a => a.status === 'in_stock').length;
+  const expiringCount = rows.filter(expiring).length;
   return <div className="sites-workspace">
     <Flash kind="error" msg={err}/>
+    <div className="stats-grid">
+      <StatCard icon={<Boxes size={15}/>} tone="blue" label="Total assets" value={rows.length}/>
+      <StatCard icon={<UserCheck size={15}/>} tone="green" label="Assigned / in use" value={assignedCount}/>
+      <StatCard icon={<Archive size={15}/>} tone="purple" label="In stock" value={inStockCount}/>
+      <StatCard icon={<CircleAlert size={15}/>} tone="orange" label="Warranty expiring" value={expiringCount}/>
+    </div>
     <section className="panel page-panel"><div className="panel-head"><div><h3>Asset inventory</h3><p>{rows.length} asset{rows.length === 1 ? '' : 's'} · tags, warranty and who has what.</p></div>
       <div className="row-actions"><Select className="filter-select" value={filter} onChange={e => setFilter(e.target.value)}><option value="all">All statuses</option>{ASSET_STATUSES.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}</Select>
       {isOp(role) && <button className="primary-action" onClick={() => setEditing('new')}><Plus size={15}/>Add asset</button>}</div></div>
@@ -399,16 +427,16 @@ export function AssetsPage({ organizationId, role, token, devices, sites }: { or
           <td><b>{a.name}</b>{a.device_id && <div className="muted">linked: {hostname(a.device_id)}</div>}</td>
           <td>{ASSET_CATEGORIES.find(c => c.value === a.category)?.label ?? a.category}</td>
           <td><span className={`status-pill ${a.status === 'in_use' ? 'online' : a.status === 'retired' ? 'offline' : 'pending'}`}><i/>{ASSET_STATUSES.find(s => s.value === a.status)?.label ?? a.status}</span></td>
-          <td>{a.assigned_to ?? '—'}</td>
+          <td>{assigneeLabel(a)}</td>
           <td>{a.warranty_expires ? <span className={expiring(a) ? 'txt-warn' : ''}>{new Date(a.warranty_expires).toLocaleDateString()}</span> : '—'}</td>
           <td>{isOp(role) && <div className="row-actions"><button className="mini-icon" title="Edit" disabled={busy === a.id} onClick={() => setEditing(a)}><Pencil size={15}/></button><button className="mini-icon danger" title="Delete" disabled={busy === a.id} onClick={() => remove(a)}><Trash2 size={15}/></button></div>}</td>
         </tr>)}</tbody>
       </table></div><Pager t={t}/></>}
     </section>
-    {editing && <AssetModal asset={editing === 'new' ? null : editing} devices={devices} sites={sites} busy={!!busy} onSave={values => save(values, editing === 'new' ? undefined : editing.id)} onClose={() => setEditing(null)}/>}
+    {editing && <AssetModal asset={editing === 'new' ? null : editing} devices={devices} sites={sites} members={members} busy={!!busy} onSave={values => save(values, editing === 'new' ? undefined : editing.id)} onClose={() => setEditing(null)}/>}
   </div>;
 }
-function AssetModal({ asset, devices, sites, busy, onSave, onClose }: { asset: Asset | null; devices: Dev[]; sites: { id: string; name: string }[]; busy: boolean; onSave: (v: Partial<Asset>) => void; onClose: () => void }) {
+function AssetModal({ asset, devices, sites, members, busy, onSave, onClose }: { asset: Asset | null; devices: Dev[]; sites: { id: string; name: string }[]; members: OrgMember[]; busy: boolean; onSave: (v: Partial<Asset>) => void; onClose: () => void }) {
   const [v, setV] = useState<Partial<Asset>>(asset ?? { asset_tag: '', name: '', category: 'laptop', status: 'in_stock' });
   const set = (k: keyof Asset, val: any) => setV(prev => ({ ...prev, [k]: val }));
   return <Modal title={asset ? 'Edit asset' : 'Add asset'} subtitle={asset?.asset_tag} icon={<Boxes size={17}/>} onClose={onClose}>
@@ -417,7 +445,8 @@ function AssetModal({ asset, devices, sites, busy, onSave, onClose }: { asset: A
       <label>Name<input value={v.name ?? ''} onChange={e => set('name', e.target.value)} required maxLength={120} placeholder="Dell Latitude 5440"/></label>
       <label>Category<Select value={v.category ?? 'laptop'} onChange={e => set('category', e.target.value)}>{ASSET_CATEGORIES.map(c => <option key={c.value} value={c.value}>{c.label}</option>)}</Select></label>
       <label>Status<Select value={v.status ?? 'in_stock'} onChange={e => set('status', e.target.value)}>{ASSET_STATUSES.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}</Select></label>
-      <label>Assigned to<input value={v.assigned_to ?? ''} onChange={e => set('assigned_to', e.target.value)} maxLength={120} placeholder="Name or email"/></label>
+      <label>Assigned to (user)<Select value={v.assigned_user_id ?? ''} onChange={e => set('assigned_user_id', e.target.value || null)}><option value="">Unassigned</option>{members.map(m => <option key={m.user_id} value={m.user_id}>{m.email}</option>)}</Select></label>
+      <label>Assigned to (free text) <em className="optional">Optional</em><input value={v.assigned_to ?? ''} onChange={e => set('assigned_to', e.target.value)} maxLength={120} placeholder="Outside contact, or leave blank"/></label>
       <label>Linked device <em className="optional">Optional</em><Select value={v.device_id ?? ''} onChange={e => set('device_id', e.target.value || null)}><option value="">None</option>{devices.map(d => <option key={d.id} value={d.id}>{d.hostname}</option>)}</Select></label>
       <label>Site <em className="optional">Optional</em><Select value={v.site_id ?? ''} onChange={e => set('site_id', e.target.value || null)}><option value="">None</option>{sites.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}</Select></label>
       <label>Location<input value={v.location ?? ''} onChange={e => set('location', e.target.value)} maxLength={120} placeholder="HQ · 2nd floor"/></label>
@@ -439,8 +468,9 @@ const TICKET_STATUSES = [
 const TICKET_PRIORITIES = [
   { value: 'low', label: 'Low' }, { value: 'medium', label: 'Medium' }, { value: 'high', label: 'High' }, { value: 'critical', label: 'Critical' },
 ];
-type Ticket = { id: string; number: number; title: string; description: string | null; status: string; priority: string; requester_email: string | null; device_id: string | null; created_at: string; updated_at: string; resolved_at: string | null };
+type Ticket = { id: string; number: number; title: string; description: string | null; status: string; priority: string; requester_email: string | null; device_id: string | null; assigned_user_id: string | null; created_at: string; updated_at: string; resolved_at: string | null };
 export function TicketsPage({ organizationId, token, devices }: { organizationId: string; role: Role; token: string; devices: Dev[] }) {
+  const members = useOrgMembers(organizationId, token);
   const [rows, setRows] = useState<Ticket[]>([]); const [loading, setLoading] = useState(true); const [err, setErr] = useState('');
   const [filter, setFilter] = useState('open'); const [creating, setCreating] = useState(false); const [openId, setOpenId] = useState('');
   const load = useCallback(async () => {
@@ -458,44 +488,60 @@ export function TicketsPage({ organizationId, token, devices }: { organizationId
     try { await api(`/tickets/${t.id}`, token, { method: 'PUT', body: { organization_id: organizationId, status } }); await load(); }
     catch (e) { setErr(e instanceof Error ? e.message : 'Could not update that ticket.'); }
   };
+  const setAssignee = async (t: Ticket, assignedUserId: string) => {
+    try { await api(`/tickets/${t.id}`, token, { method: 'PUT', body: { organization_id: organizationId, assigned_user_id: assignedUserId || null } }); await load(); }
+    catch (e) { setErr(e instanceof Error ? e.message : 'Could not update that ticket.'); }
+  };
   const list = rows.filter(t => filter === 'all' || t.status === filter);
   const t = useTable(list, (r, k) => (k === 'created_at' || k === 'updated_at') ? new Date((r as any)[k]).getTime() : (r as any)[k]);
   const hostname = (id: string | null) => id ? (devices.find(d => d.id === id)?.hostname ?? '—') : '—';
   const open = rows.find(r => r.id === openId) ?? null;
+  const openCount = rows.filter(r => r.status === 'open').length;
+  const inProgressCount = rows.filter(r => r.status === 'in_progress').length;
+  const resolvedCount = rows.filter(r => r.status === 'resolved' || r.status === 'closed').length;
+  const unassignedCount = rows.filter(r => !r.assigned_user_id && r.status !== 'resolved' && r.status !== 'closed').length;
   return <div className="sites-workspace">
     <Flash kind="error" msg={err}/>
+    <div className="stats-grid">
+      <StatCard icon={<Clock size={15}/>} tone="orange" label="Open" value={openCount}/>
+      <StatCard icon={<MessageSquare size={15}/>} tone="blue" label="In progress" value={inProgressCount}/>
+      <StatCard icon={<CheckCircle2 size={15}/>} tone="green" label="Resolved / closed" value={resolvedCount}/>
+      <StatCard icon={<CircleAlert size={15}/>} tone="purple" label="Unassigned (open)" value={unassignedCount}/>
+    </div>
     <section className="panel page-panel"><div className="panel-head"><div><h3>Tickets</h3><p>{rows.filter(r => r.status === 'open').length} open · {rows.length} total</p></div>
       <div className="row-actions"><Select className="filter-select" value={filter} onChange={e => setFilter(e.target.value)}><option value="all">All</option>{TICKET_STATUSES.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}</Select>
       <button className="primary-action" onClick={() => setCreating(true)}><Plus size={15}/>New ticket</button></div></div>
       {loading ? <Skeleton rows={3}/> : !t.rows.length ? <EmptyState icon={<MessageSquare size={22}/>} title="No tickets" text="Nothing matches this filter."/> : <><div className="table-wrap"><table>
-        <thead><tr><th>#</th><Th t={t} k="title">TITLE</Th><Th t={t} k="priority">PRIORITY</Th><Th t={t} k="status">STATUS</Th><th>DEVICE</th><Th t={t} k="updated_at">UPDATED</Th></tr></thead>
+        <thead><tr><th>#</th><Th t={t} k="title">TITLE</Th><Th t={t} k="priority">PRIORITY</Th><Th t={t} k="status">STATUS</Th><th>ASSIGNED TO</th><th>DEVICE</th><Th t={t} k="updated_at">UPDATED</Th></tr></thead>
         <tbody>{t.rows.map(r => <tr key={r.id} className="row-click" onClick={() => setOpenId(r.id)}>
           <td>#{r.number}</td><td><b>{r.title}</b></td>
           <td><span className={`sev sev-${r.priority === 'critical' ? 'critical' : r.priority === 'high' ? 'warning' : 'info'}`}>{TICKET_PRIORITIES.find(p => p.value === r.priority)?.label}</span></td>
           <td><span className={`status-pill ${r.status === 'open' ? 'pending' : r.status === 'resolved' || r.status === 'closed' ? 'online' : 'offline'}`}><i/>{TICKET_STATUSES.find(s => s.value === r.status)?.label}</span></td>
+          <td onClick={e => e.stopPropagation()}><Select className="filter-select" value={r.assigned_user_id ?? ''} onChange={e => setAssignee(r, e.target.value)}><option value="">Unassigned</option>{members.map(m => <option key={m.user_id} value={m.user_id}>{m.email}</option>)}</Select></td>
           <td>{hostname(r.device_id)}</td><td>{ago(r.updated_at)}</td>
         </tr>)}</tbody>
       </table></div><Pager t={t}/></>}
     </section>
-    {creating && <TicketModal devices={devices} onSave={create} onClose={() => setCreating(false)}/>}
-    {open && <TicketDrawer ticket={open} organizationId={organizationId} token={token} devices={devices} onStatus={s => setStatus(open, s)} onClose={() => { setOpenId(''); void load(); }}/>}
+    {creating && <TicketModal devices={devices} members={members} onSave={create} onClose={() => setCreating(false)}/>}
+    {open && <TicketDrawer ticket={open} organizationId={organizationId} token={token} devices={devices} members={members} onStatus={s => setStatus(open, s)} onAssign={id => setAssignee(open, id)} onClose={() => { setOpenId(''); void load(); }}/>}
   </div>;
 }
-function TicketModal({ devices, onSave, onClose }: { devices: Dev[]; onSave: (v: Partial<Ticket>) => void; onClose: () => void }) {
+function TicketModal({ devices, members, onSave, onClose }: { devices: Dev[]; members: OrgMember[]; onSave: (v: Partial<Ticket>) => void; onClose: () => void }) {
   const [title, setTitle] = useState(''); const [description, setDescription] = useState(''); const [priority, setPriority] = useState('medium');
-  const [requesterEmail, setRequesterEmail] = useState(''); const [deviceId, setDeviceId] = useState(''); const [busy, setBusy] = useState(false);
+  const [requesterEmail, setRequesterEmail] = useState(''); const [deviceId, setDeviceId] = useState(''); const [assignedUserId, setAssignedUserId] = useState(''); const [busy, setBusy] = useState(false);
   return <Modal title="New ticket" icon={<MessageSquare size={17}/>} onClose={onClose}>
-    <form className="modal-form" onSubmit={async e => { e.preventDefault(); setBusy(true); await onSave({ title, description, priority, requester_email: requesterEmail || undefined, device_id: deviceId || undefined }); setBusy(false); }}>
+    <form className="modal-form" onSubmit={async e => { e.preventDefault(); setBusy(true); await onSave({ title, description, priority, requester_email: requesterEmail || undefined, device_id: deviceId || undefined, assigned_user_id: assignedUserId || undefined }); setBusy(false); }}>
       <label className="span-2">Title<input value={title} onChange={e => setTitle(e.target.value)} required maxLength={160} placeholder="Printer on 2nd floor not working"/></label>
       <label className="span-2">Description<input value={description} onChange={e => setDescription(e.target.value)} maxLength={1000} placeholder="What's happening, since when…"/></label>
       <label>Priority<Select value={priority} onChange={e => setPriority(e.target.value)}>{TICKET_PRIORITIES.map(p => <option key={p.value} value={p.value}>{p.label}</option>)}</Select></label>
+      <label>Assigned to <em className="optional">Optional</em><Select value={assignedUserId} onChange={e => setAssignedUserId(e.target.value)}><option value="">Unassigned</option>{members.map(m => <option key={m.user_id} value={m.user_id}>{m.email}</option>)}</Select></label>
       <label>Related device <em className="optional">Optional</em><Select value={deviceId} onChange={e => setDeviceId(e.target.value)}><option value="">None</option>{devices.map(d => <option key={d.id} value={d.id}>{d.hostname}</option>)}</Select></label>
       <label className="span-2">Requester email <em className="optional">Optional</em><input type="email" value={requesterEmail} onChange={e => setRequesterEmail(e.target.value)} placeholder="colleague@company.com"/></label>
       <div className="modal-actions span-2"><button type="button" className="secondary-action" onClick={onClose} disabled={busy}>Cancel</button><button className="primary-action" disabled={busy || !title.trim()}>{busy ? 'Creating…' : 'Create ticket'}</button></div>
     </form>
   </Modal>;
 }
-function TicketDrawer({ ticket, organizationId, token, devices, onStatus, onClose }: { ticket: Ticket; organizationId: string; token: string; devices: Dev[]; onStatus: (s: string) => void; onClose: () => void }) {
+function TicketDrawer({ ticket, organizationId, token, devices, members, onStatus, onAssign, onClose }: { ticket: Ticket; organizationId: string; token: string; devices: Dev[]; members: OrgMember[]; onStatus: (s: string) => void; onAssign: (userId: string) => void; onClose: () => void }) {
   const [comments, setComments] = useState<{ id: string; author_email: string | null; body: string; created_at: string }[]>([]);
   const [text, setText] = useState(''); const [busy, setBusy] = useState(false); const [err, setErr] = useState('');
   const load = useCallback(async () => {
@@ -513,6 +559,7 @@ function TicketDrawer({ ticket, organizationId, token, devices, onStatus, onClos
     <Flash kind="error" msg={err}/>
     <div className="ticket-meta">
       <Select className="filter-select" value={ticket.status} onChange={e => onStatus(e.target.value)}>{TICKET_STATUSES.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}</Select>
+      <Select className="filter-select" value={ticket.assigned_user_id ?? ''} onChange={e => onAssign(e.target.value)}><option value="">Unassigned</option>{members.map(m => <option key={m.user_id} value={m.user_id}>{m.email}</option>)}</Select>
       <span className={`sev sev-${ticket.priority === 'critical' ? 'critical' : ticket.priority === 'high' ? 'warning' : 'info'}`}>{TICKET_PRIORITIES.find(p => p.value === ticket.priority)?.label}</span>
       {ticket.device_id && <span className="muted">device: {devices.find(d => d.id === ticket.device_id)?.hostname ?? '—'}</span>}
     </div>
