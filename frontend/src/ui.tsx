@@ -78,23 +78,36 @@ function flatOptions(ch: ReactNode, group?: string): Opt[] {
 export function Select({ value, onChange, children, className = '', disabled, id }: { value: string | number; onChange: (e: { target: { value: string } }) => void; children: ReactNode; className?: string; disabled?: boolean; id?: string }) {
   const opts = flatOptions(children); const cur = opts.find(o => o.value === String(value));
   const [open, setOpen] = useState(false); const [up, setUp] = useState(false); const [hi, setHi] = useState(0); const box = useRef<HTMLDivElement>(null);
+  const [rect, setRect] = useState<{ left: number; top: number; bottom: number; width: number } | null>(null);
+  const reposition = () => {
+    if (!box.current) return;
+    const r = box.current.getBoundingClientRect();
+    setRect({ left: r.left, top: r.top, bottom: r.bottom, width: r.width });
+  };
   useEffect(() => {
     if (!open) return;
     const off = (e: MouseEvent) => { if (!box.current?.contains(e.target as Node)) setOpen(false); };
-    document.addEventListener('mousedown', off); return () => document.removeEventListener('mousedown', off);
+    const onScrollOrResize = () => reposition();
+    document.addEventListener('mousedown', off);
+    window.addEventListener('scroll', onScrollOrResize, true);
+    window.addEventListener('resize', onScrollOrResize);
+    return () => { document.removeEventListener('mousedown', off); window.removeEventListener('scroll', onScrollOrResize, true); window.removeEventListener('resize', onScrollOrResize); };
   }, [open]);
   const toggle = () => {
     if (disabled) return;
-    if (!open && box.current) { const r = box.current.getBoundingClientRect(); const need = Math.min(opts.length * 38 + 14 + new Set(opts.map(o => o.group).filter(Boolean)).size * 30, 340); setUp(window.innerHeight - r.bottom < need && r.top > window.innerHeight - r.bottom); setHi(Math.max(0, opts.findIndex(o => o.value === String(value)))); }
+    if (!open && box.current) { const r = box.current.getBoundingClientRect(); const need = Math.min(opts.length * 38 + 14 + new Set(opts.map(o => o.group).filter(Boolean)).size * 30, 340); setUp(window.innerHeight - r.bottom < need && r.top > window.innerHeight - r.bottom); setHi(Math.max(0, opts.findIndex(o => o.value === String(value)))); setRect({ left: r.left, top: r.top, bottom: r.bottom, width: r.width }); }
     setOpen(o => !o);
   };
   const pick = (o?: Opt) => { if (!o || o.disabled) return; onChange({ target: { value: o.value } }); setOpen(false); };
+  const menu = open && rect ? <ul className={`select-menu portal ${up ? 'up' : ''}`} role="listbox" style={{ position: 'fixed', left: rect.left, width: rect.width, ...(up ? { bottom: window.innerHeight - rect.top + 6 } : { top: rect.bottom + 6 }) }}>
+    {opts.map((o, i) => [o.group && o.group !== opts[i - 1]?.group ? <li key={'g' + o.group} className="select-group" role="presentation" onClick={e => e.preventDefault()}>{o.group}</li> : null, <li key={o.value + i} role="option" aria-selected={o.value === String(value)} className={`${i === hi ? 'hi' : ''} ${o.value === String(value) ? 'sel' : ''} ${o.disabled ? 'dis' : ''}`} onMouseEnter={() => setHi(i)} onClick={e => { e.preventDefault(); pick(o); }}><span>{o.label}</span>{o.value === String(value) && <Check size={15}/>}</li>])}
+  </ul> : null;
   return <div ref={box} className={`select ${open ? 'open' : ''} ${className}`}>
     <button type="button" id={id} className="select-btn" disabled={disabled} aria-haspopup="listbox" aria-expanded={open} onClick={toggle}
       onKeyDown={e => { if (e.key === 'Escape') setOpen(false); else if (e.key === 'ArrowDown') { e.preventDefault(); if (!open) toggle(); else setHi(h => Math.min(h + 1, opts.length - 1)); } else if (e.key === 'ArrowUp') { e.preventDefault(); setHi(h => Math.max(h - 1, 0)); } else if (e.key === 'Enter' && open) { e.preventDefault(); pick(opts[hi]); } }}>
       <span>{cur?.label ?? ''}</span><ChevronDown size={16}/>
     </button>
-    {open && <ul className={up ? 'select-menu up' : 'select-menu'} role="listbox">{opts.map((o, i) => [o.group && o.group !== opts[i - 1]?.group ? <li key={'g' + o.group} className="select-group" role="presentation" onClick={e => e.preventDefault()}>{o.group}</li> : null, <li key={o.value + i} role="option" aria-selected={o.value === String(value)} className={`${i === hi ? 'hi' : ''} ${o.value === String(value) ? 'sel' : ''} ${o.disabled ? 'dis' : ''}`} onMouseEnter={() => setHi(i)} onClick={e => { e.preventDefault(); pick(o); }}><span>{o.label}</span>{o.value === String(value) && <Check size={15}/>}</li>])}</ul>}
+    {menu && createPortal(menu, document.body)}
   </div>;
 }
 

@@ -920,11 +920,11 @@ td.empty,.empty{padding:40px 24px!important;text-align:center!important;color:va
 .filter-bar>.secondary-action,.filter-bar>.primary-action{margin-inline-start:auto;height:42px!important}
 .page-panel>.error-banner,.page-panel>.success-banner{margin:16px 24px 0}
 @media(max-width:650px){th:first-child,td:first-child{padding-inline-start:16px!important}th:last-child,td:last-child{padding-inline-end:16px!important}.filter-bar{padding:14px 16px}.filter-bar .select,.filter-bar .filter-select,.filter-bar .filter-input{flex:1 1 100%}.filter-bar>.secondary-action{margin:0;width:100%}}
-.modal-row{display:grid;grid-template-columns:minmax(0,1.4fr) minmax(0,1fr);gap:12px}.form-modal{overflow:visible!important}.modal-note{margin:0}@media(max-width:520px){.modal-row{grid-template-columns:1fr}}
-.select.open{z-index:60}.modal .select-menu{z-index:70}
+.modal-row{display:grid;grid-template-columns:minmax(0,1.4fr) minmax(0,1fr);gap:12px}.modal-note{margin:0}@media(max-width:520px){.modal-row{grid-template-columns:1fr}}
+.select.open{z-index:60}.select-menu.portal{z-index:300}
 .select-menu .select-group{padding:10px 10px 4px;font:600 var(--fs-xs) 'DM Sans';letter-spacing:.8px;text-transform:uppercase;color:#6f7a89;cursor:default;pointer-events:none;background:none!important}
 .select-menu .select-group:first-child{padding-top:4px}
-.modal .select-menu{max-height:340px}
+.select-menu.portal{max-height:340px}
 .field-help{font-size:var(--fs-xs);font-weight:400;color:var(--muted2);line-height:1.45}
 
 /* =====================================================================
