@@ -1,5 +1,5 @@
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Activity, Pencil, Users, Bell, Boxes, Cable, ChevronDown, CircleHelp, LayoutDashboard, LogOut, Network, Search, Settings, ShieldCheck, ScrollText, Globe2, FileBarChart, ClipboardList, Gauge, MonitorUp, Zap, LockKeyhole, Eye, EyeOff, MapPin, Server, ArrowUpRight, UserRound, KeyRound, Sun, Moon, Languages, MoreHorizontal, Building2, Check, Plus, Trash2, RefreshCw, Layers, MessageSquare } from 'lucide-react';
+import { Activity, Pencil, Users, Bell, Boxes, Cable, ChevronDown, CircleHelp, LayoutDashboard, LogOut, Network, Search, Settings, ShieldCheck, ScrollText, Globe2, FileBarChart, ClipboardList, Gauge, MonitorUp, Zap, LockKeyhole, Eye, EyeOff, MapPin, Server, ArrowUpRight, UserRound, KeyRound, Sun, Moon, Languages, MoreHorizontal, Building2, Check, Plus, Trash2, RefreshCw, Layers, MessageSquare, Wrench, AlertTriangle, Crown, Sparkles, type LucideIcon } from 'lucide-react';
 import type { Session, User } from '@supabase/supabase-js';
 
 type Device = { id: string; hostname: string; ip_address: string | null; status: string; device_type: string | null; last_seen_at: string | null; site_id?: string; archived_at?: string | null; agent_version?: string | null; parent_device_id?: string | null; os_name?: string | null };
@@ -471,19 +471,21 @@ const ROLE_OPTIONS: { value: string; label: string; desc: string }[] = [
   { value: 'operator', label: 'Operator', desc: 'Viewer access, plus can manage devices, checks and maintenance.' },
   { value: 'admin', label: 'Admin', desc: 'Operator access, plus can manage team members and settings.' },
 ];
-const PERMISSION_RESOURCES: { value: string; label: string }[] = [
-  { value: 'devices', label: 'Devices' },
-  { value: 'sites', label: 'Sites' },
-  { value: 'networks', label: 'Networks' },
-  { value: 'alerts', label: 'Alerts' },
-  { value: 'maintenance', label: 'Maintenance' },
-  { value: 'uptime', label: 'Uptime checks' },
-  { value: 'notifications', label: 'Notifications' },
-  { value: 'team', label: 'Team' },
-  { value: 'platform', label: 'Platform' },
-  { value: 'assets', label: 'Assets' },
-  { value: 'tickets', label: 'Tickets' },
+const PERMISSION_RESOURCES: { value: string; label: string; icon: LucideIcon }[] = [
+  { value: 'devices', label: 'Devices', icon: Server },
+  { value: 'sites', label: 'Sites', icon: MapPin },
+  { value: 'networks', label: 'Networks', icon: Network },
+  { value: 'alerts', label: 'Alerts', icon: AlertTriangle },
+  { value: 'maintenance', label: 'Maintenance', icon: Wrench },
+  { value: 'uptime', label: 'Uptime checks', icon: Activity },
+  { value: 'notifications', label: 'Notifications', icon: Bell },
+  { value: 'team', label: 'Team', icon: Users },
+  { value: 'platform', label: 'Platform', icon: Settings },
+  { value: 'assets', label: 'Assets', icon: Boxes },
+  { value: 'tickets', label: 'Tickets', icon: MessageSquare },
 ];
+// One distinct icon per role so the cards read at a glance instead of all looking the same.
+const ROLE_ICON: Record<string, LucideIcon> = { owner: Crown, admin: ShieldCheck, operator: Wrench, viewer: Eye, custom: Sparkles };
 type RolePermission = { resource: string; can_view: boolean; can_create: boolean; can_edit: boolean; can_delete: boolean };
 type CustomRole = { id: string; name: string; created_at: string; permissions: RolePermission[] };
 function emptyPermissions(): RolePermission[] {
@@ -587,13 +589,13 @@ function TeamManagement({organizationId,role,accessToken,currentUserId}:{organiz
       <div className="panel-head"><div className="head-with-icon"><span className="head-icon"><ShieldCheck size={18}/></span><div><h3>Roles &amp; permissions</h3><p>What each role can do. Built-in roles are fixed; custom roles let you choose access per area.</p></div></div>
         <button className="secondary-action" onClick={()=>setEditingRole('new')}><Plus size={16}/>Create role</button></div>
       <div className="roles-grid">
-        {(['owner','admin','operator','viewer'] as const).map(k => <article key={k} className="role-tile builtin">
-          <header><span className={`role-badge ${k}`}>{k}</span><span className="role-count">{countFor(k)} member{countFor(k) === 1 ? '' : 's'}</span></header>
+        {(['owner','admin','operator','viewer'] as const).map(k => { const RoleIcon = ROLE_ICON[k]; return <article key={k} className="role-tile builtin">
+          <header><span className="role-tile-title"><span className={`role-tile-icon ${k}`}><RoleIcon size={15}/></span><span className={`role-badge ${k}`}>{k}</span></span><span className="role-count">{countFor(k)} member{countFor(k) === 1 ? '' : 's'}</span></header>
           <ul>{BUILTIN_SUMMARY[k].map(s => <li key={s}><Check size={13}/>{s}</li>)}</ul>
           <footer><span className="muted">Built-in · can’t be changed</span></footer>
-        </article>)}
+        </article>; })}
         {roles.map(r => { const sum = permSummary(r.permissions); return <article key={r.id} className="role-tile custom">
-          <header><span className="role-badge custom">{r.name}</span><span className="role-count">{countFor(r.id)} member{countFor(r.id) === 1 ? '' : 's'}</span></header>
+          <header><span className="role-tile-title"><span className="role-tile-icon custom"><Sparkles size={15}/></span><span className="role-badge custom">{r.name}</span></span><span className="role-count">{countFor(r.id)} member{countFor(r.id) === 1 ? '' : 's'}</span></header>
           {sum.length ? <ul>{sum.slice(0, 4).map(s => <li key={s}><Check size={13}/>{s}</li>)}{sum.length > 4 && <li className="more">+{sum.length - 4} more</li>}</ul> : <p className="muted role-empty">No permissions yet — this role can’t see anything.</p>}
           <footer><button className="secondary-action sm" disabled={busyId===r.id} onClick={()=>setEditingRole(r)}><Pencil size={14}/>Edit permissions</button><button className="icon-only danger" aria-label={`Delete role ${r.name}`} title="Delete role" disabled={busyId===r.id} onClick={()=>removeRole(r)}><Trash2 size={15}/></button></footer>
         </article>; })}
@@ -672,8 +674,8 @@ function CustomRoleModal({role,busy,onSave,onClose}:{role:CustomRole|null;busy:b
       <label>Role name<input type="text" autoFocus value={name} onChange={e=>setName(e.target.value)} placeholder="Field technician" maxLength={80}/></label>
       <div className="perm-matrix" role="table" aria-label="Permissions">
         <div className="perm-row head" role="row"><span role="columnheader">Area</span>{PERM_KEYS.map(k => <button key={k.key} type="button" role="columnheader" className={colAll(k.key) ? 'perm-col on' : 'perm-col'} title={`${colAll(k.key) ? 'Clear' : 'Allow'} ${k.label.toLowerCase()} everywhere`} onClick={() => setCol(k.key, !colAll(k.key))}>{k.label}</button>)}<span role="columnheader" className="sr-only">Row</span></div>
-        {PERMISSION_RESOURCES.map(res => { const p = perms.find(x => x.resource === res.value)!; const all = p.can_view && p.can_create && p.can_edit && p.can_delete; return <div key={res.value} className="perm-row" role="row">
-          <span role="rowheader">{res.label}</span>
+        {PERMISSION_RESOURCES.map(res => { const p = perms.find(x => x.resource === res.value)!; const all = p.can_view && p.can_create && p.can_edit && p.can_delete; const ResIcon = res.icon; return <div key={res.value} className="perm-row" role="row">
+          <span role="rowheader" className="perm-row-label"><ResIcon size={14}/>{res.label}</span>
           {PERM_KEYS.map(k => <label key={k.key} className="perm-cell" role="cell"><input type="checkbox" checked={p[k.key]} onChange={() => toggle(res.value, k.key)} aria-label={`${k.label} ${res.label}`}/><span className="perm-box" aria-hidden="true"><Check size={13}/></span></label>)}
           <button type="button" className="text-button perm-all" onClick={() => setRow(res.value, !all)}>{all ? 'Clear' : 'All'}</button>
         </div>; })}

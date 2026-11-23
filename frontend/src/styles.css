@@ -1290,6 +1290,13 @@ th{background:rgba(255,255,255,.025)!important}
 .roles-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:12px;padding:18px 24px 22px}
 .role-tile{position:relative;display:flex;flex-direction:column;gap:12px;min-height:170px;padding:16px;border-radius:16px;background:rgba(255,255,255,.025);border:1px solid var(--glass-line);text-align:start;color:inherit;font:inherit}
 .role-tile header{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.role-tile-title{display:flex;align-items:center;gap:9px;min-width:0}
+.role-tile-icon{width:28px;height:28px;flex-shrink:0;display:grid;place-items:center;border-radius:8px;background:rgba(255,255,255,.07);color:#c4c4cb}
+.role-tile-icon.owner{background:rgba(245,99,15,.15);color:#ffb27f}
+.role-tile-icon.admin{background:rgba(96,165,250,.13);color:#93c5fd}
+.role-tile-icon.operator{background:rgba(52,211,153,.12);color:#6ee7b7}
+.role-tile-icon.viewer{background:rgba(255,255,255,.07);color:#c4c4cb}
+.role-tile-icon.custom{background:rgba(167,139,250,.14);color:#c4b5fd}
 .role-count{color:var(--muted3);font-size:12px;white-space:nowrap}
 .role-tile ul{list-style:none;margin:0;padding:0;display:flex;flex-direction:column;gap:7px;flex:1}
 .role-tile li{display:flex;align-items:flex-start;gap:8px;color:#c9c9cf;font-size:13px;line-height:1.4}
@@ -1330,6 +1337,8 @@ th{background:rgba(255,255,255,.025)!important}
 .perm-col{justify-self:center;height:28px;padding:0 10px;border:0;border-radius:8px;background:none;color:var(--muted2);font:700 11px 'DM Sans',sans-serif;letter-spacing:1px;text-transform:uppercase;cursor:pointer}
 .perm-col:hover{background:rgba(255,255,255,.06);color:#fff}.perm-col.on{color:#ff9a5c}
 .perm-row [role=rowheader]{color:#e6e6ea;font-weight:500}
+.perm-row-label{display:flex;align-items:center;gap:8px}
+.perm-row-label svg{flex-shrink:0;color:var(--muted2)}
 .modal-form label.perm-cell,.perm-cell{display:grid!important;place-items:center;justify-self:center;width:40px;height:40px;margin:0;cursor:pointer}
 .perm-cell input{position:absolute;opacity:0;pointer-events:none}
 .perm-box{width:20px;height:20px;display:grid;place-items:center;border-radius:6px;border:1.5px solid rgba(255,255,255,.25);color:transparent;transition:background .12s,border-color .12s,color .12s}
