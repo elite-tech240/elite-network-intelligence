@@ -1508,6 +1508,103 @@ async function handle(req: Request): Promise<Response> {
     return json({ ok: true, seat_id: seatId });
   }
 
+  // ---- Components (Snipe-IT style: qty assigned to an ASSET, not a user) ---------------------
+  if (req.method === "GET" && path === "/components") {
+    const organizationId = url.searchParams.get("organization_id") || "";
+    await requirePermission(req, organizationId, "assets", "view");
+    const [{ data: components, error }, { data: assignments }] = await Promise.all([
+      admin.from("components").select("*").eq("organization_id", organizationId).order("created_at", { ascending: false }),
+      admin.from("component_assignments").select("*").eq("organization_id", organizationId).is("checked_in_at", null),
+    ]);
+    if (error) return fail("Could not load components", 500);
+    return json({ components: components || [], assignments: assignments || [] });
+  }
+
+  if (req.method === "POST" && path === "/components") {
+    const body = await readJson(req);
+    const organizationId = String(body.organization_id || "");
+    const { user } = await requirePermission(req, organizationId, "assets", "create");
+    const name = String(body.name || "").trim();
+    if (!name) return fail("Name is required");
+    const row = {
+      organization_id: organizationId, name, category: String(body.category || "other"),
+      total_qty: Math.max(0, Number(body.total_qty) || 1),
+      min_qty: body.min_qty === "" || body.min_qty == null ? null : Math.max(0, Number(body.min_qty) || 0),
+      site_id: body.site_id || null, vendor: body.vendor ? String(body.vendor).trim() : null,
+      purchase_date: body.purchase_date || null, notes: body.notes ? String(body.notes).trim() : null,
+    };
+    const { data, error } = await admin.from("components").insert(row).select("*").single();
+    if (error) return fail("Could not create component", 500);
+    await audit(organizationId, "user", user.id, "create_component", "component", data.id, { name });
+    return json({ ok: true, component: data }, 201);
+  }
+
+  const componentIdMatch = path.match(new RegExp(`^/components/${uuidPart}$`, "i"));
+  if (req.method === "PUT" && componentIdMatch) {
+    const componentId = componentIdMatch[1];
+    const body = await readJson(req);
+    const organizationId = String(body.organization_id || "");
+    const { user } = await requirePermission(req, organizationId, "assets", "edit");
+    const { data: existing } = await admin.from("components").select("id").eq("id", componentId).eq("organization_id", organizationId).maybeSingle();
+    if (!existing) return fail("Component not found in this workspace", 404);
+    const patch: Record<string, unknown> = { updated_at: new Date().toISOString() };
+    for (const k of ["name", "category", "total_qty", "min_qty", "site_id", "vendor", "purchase_date", "notes"]) {
+      if (body[k] !== undefined) patch[k] = typeof body[k] === "string" ? body[k].trim() || null : body[k];
+    }
+    const { data, error } = await admin.from("components").update(patch).eq("id", componentId).select("*").single();
+    if (error) return fail("Could not update component", 500);
+    await audit(organizationId, "user", user.id, "update_component", "component", componentId, {});
+    return json({ ok: true, component: data });
+  }
+
+  if (req.method === "DELETE" && componentIdMatch) {
+    const componentId = componentIdMatch[1];
+    const organizationId = url.searchParams.get("organization_id") || "";
+    const { user } = await requirePermission(req, organizationId, "assets", "delete");
+    const { data: existing } = await admin.from("components").select("id").eq("id", componentId).eq("organization_id", organizationId).maybeSingle();
+    if (!existing) return fail("Component not found in this workspace", 404);
+    const { error } = await admin.from("components").delete().eq("id", componentId);
+    if (error) return fail("Could not delete component", 500);
+    await audit(organizationId, "user", user.id, "delete_component", "component", componentId, {});
+    return json({ ok: true, component_id: componentId });
+  }
+
+  if (req.method === "POST" && path === "/components/assign") {
+    const body = await readJson(req);
+    const organizationId = String(body.organization_id || "");
+    const { user } = await requirePermission(req, organizationId, "assets", "edit");
+    const componentId = String(body.component_id || "");
+    const assetId = String(body.asset_id || "");
+    const qty = Math.max(1, Math.round(Number(body.qty) || 1));
+    const { data: component } = await admin.from("components").select("id,total_qty").eq("id", componentId).eq("organization_id", organizationId).maybeSingle();
+    if (!component) return fail("Component not found in this workspace", 404);
+    const { data: asset } = await admin.from("assets").select("id").eq("id", assetId).eq("organization_id", organizationId).maybeSingle();
+    if (!asset) return fail("Asset not found in this workspace", 404);
+    const { data: active } = await admin.from("component_assignments").select("qty").eq("component_id", componentId).is("checked_in_at", null);
+    const assignedSoFar = (active || []).reduce((s: number, a: any) => s + a.qty, 0);
+    if (assignedSoFar + qty > component.total_qty) return fail("Not enough units available to assign", 409);
+    const { data, error } = await admin.from("component_assignments").insert({
+      organization_id: organizationId, component_id: componentId, asset_id: assetId, qty,
+    }).select("*").single();
+    if (error) return fail("Could not assign that component", 500);
+    await audit(organizationId, "user", user.id, "assign_component", "component", componentId, { asset_id: assetId, qty });
+    return json({ ok: true, assignment: data }, 201);
+  }
+
+  const componentCheckinMatch = path.match(new RegExp(`^/components/assignments/${uuidPart}/checkin$`, "i"));
+  if (req.method === "POST" && componentCheckinMatch) {
+    const assignmentId = componentCheckinMatch[1];
+    const body = await readJson(req);
+    const organizationId = String(body.organization_id || "");
+    const { user } = await requirePermission(req, organizationId, "assets", "edit");
+    const { data: existing } = await admin.from("component_assignments").select("id,component_id").eq("id", assignmentId).eq("organization_id", organizationId).is("checked_in_at", null).maybeSingle();
+    if (!existing) return fail("Active assignment not found", 404);
+    const { error } = await admin.from("component_assignments").update({ checked_in_at: new Date().toISOString() }).eq("id", assignmentId);
+    if (error) return fail("Could not check in that component", 500);
+    await audit(organizationId, "user", user.id, "checkin_component", "component", existing.component_id, {});
+    return json({ ok: true, assignment_id: assignmentId });
+  }
+
   // ---- Tickets (GLPI style helpdesk) ----------------------------------------------------------
   if (req.method === "GET" && path === "/tickets") {
     const organizationId = url.searchParams.get("organization_id") || "";

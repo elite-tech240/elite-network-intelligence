@@ -386,11 +386,12 @@ type Asset = { id: string; asset_tag: string; name: string; category: string; st
 export function AssetsPage(props: { organizationId: string; role: Role; token: string; devices: Dev[]; sites: { id: string; name: string }[] }) {
   const [module, setModule] = useState('assets');
   return <div className="sites-workspace">
-    <div className="filter-bar"><Tabs items={[{ id: 'assets', label: 'Assets' }, { id: 'accessories', label: 'Accessories' }, { id: 'consumables', label: 'Consumables' }, { id: 'licenses', label: 'Licenses' }]} active={module} onChange={setModule}/></div>
+    <div className="filter-bar"><Tabs items={[{ id: 'assets', label: 'Assets' }, { id: 'accessories', label: 'Accessories' }, { id: 'consumables', label: 'Consumables' }, { id: 'licenses', label: 'Licenses' }, { id: 'components', label: 'Components' }]} active={module} onChange={setModule}/></div>
     {module === 'assets' && <AssetsInventoryPage {...props}/>}
     {module === 'accessories' && <AccessoriesPage organizationId={props.organizationId} role={props.role} token={props.token} sites={props.sites}/>}
     {module === 'consumables' && <ConsumablesPage organizationId={props.organizationId} role={props.role} token={props.token} sites={props.sites}/>}
     {module === 'licenses' && <LicensesPage organizationId={props.organizationId} role={props.role} token={props.token} sites={props.sites}/>}
+    {module === 'components' && <ComponentsPage organizationId={props.organizationId} role={props.role} token={props.token} sites={props.sites}/>}
   </div>;
 }
 function AssetsInventoryPage({ organizationId, role, token, devices, sites }: { organizationId: string; role: Role; token: string; devices: Dev[]; sites: { id: string; name: string }[] }) {
@@ -800,6 +801,114 @@ function LicenseCheckoutModal({ license, members, busy, onSave, onClose }: { lic
       <label>Assign to (user)<Select value={userId} onChange={e => setUserId(e.target.value)}><option value="">Choose a member</option>{members.map(m => <option key={m.user_id} value={m.user_id}>{m.email}</option>)}</Select></label>
       <label>Or free text <em className="optional">Optional</em><input value={freeText} onChange={e => setFreeText(e.target.value)} maxLength={120} placeholder="Outside contact, or leave blank"/></label>
       <div className="modal-actions span-2"><button type="button" className="secondary-action" onClick={onClose} disabled={busy}>Cancel</button><button className="primary-action" disabled={busy || (!userId && !freeText.trim())}>{busy ? 'Assigning…' : 'Assign seat'}</button></div>
+    </form>
+  </Modal>;
+}
+
+// ---- Components (Snipe-IT style: qty assigned to an ASSET, not a user) ------------------------
+type Component = { id: string; name: string; category: string; total_qty: number; min_qty: number | null; site_id: string | null; vendor: string | null; purchase_date: string | null; notes: string | null };
+type ComponentAssignment = { id: string; component_id: string; asset_id: string; qty: number; assigned_at: string };
+function ComponentsPage({ organizationId, role, token, sites }: { organizationId: string; role: Role; token: string; sites: { id: string; name: string }[] }) {
+  const [rows, setRows] = useState<Component[]>([]); const [assignments, setAssignments] = useState<ComponentAssignment[]>([]);
+  const [assets, setAssets] = useState<{ id: string; asset_tag: string; name: string }[]>([]);
+  const [loading, setLoading] = useState(true); const [err, setErr] = useState('');
+  const [editing, setEditing] = useState<Component | 'new' | null>(null); const [assigning, setAssigning] = useState<Component | null>(null); const [busy, setBusy] = useState('');
+  const load = useCallback(async () => {
+    setLoading(true); setErr('');
+    try {
+      const [r, a] = await Promise.all([
+        api<{ components: Component[]; assignments: ComponentAssignment[] }>(`/components?organization_id=${organizationId}`, token),
+        api<{ assets: { id: string; asset_tag: string; name: string }[] }>(`/assets?organization_id=${organizationId}`, token),
+      ]);
+      setRows(r.components); setAssignments(r.assignments); setAssets(a.assets);
+    } catch (e) { setErr(e instanceof Error ? e.message : 'Could not load components.'); }
+    finally { setLoading(false); }
+  }, [organizationId, token]);
+  useEffect(() => { void load(); }, [load]);
+  const assignedFor = (id: string) => assignments.filter(a => a.component_id === id).reduce((s, a) => s + a.qty, 0);
+  const save = async (values: Partial<Component>, id?: string) => {
+    setBusy(id || 'new'); setErr('');
+    try {
+      if (id) await api(`/components/${id}`, token, { method: 'PUT', body: { organization_id: organizationId, ...values } });
+      else await api('/components', token, { method: 'POST', body: { organization_id: organizationId, ...values } });
+      toast(id ? 'Component updated' : 'Component created'); setEditing(null); await load();
+    } catch (e) { setErr(e instanceof Error ? e.message : 'Could not save that component.'); }
+    finally { setBusy(''); }
+  };
+  const remove = async (c: Component) => {
+    if (!await confirmDialog(`Delete component "${c.name}"?`, { confirmText: 'Delete', danger: true })) return;
+    setBusy(c.id); setErr('');
+    try { await api(`/components/${c.id}?organization_id=${organizationId}`, token, { method: 'DELETE' }); toast('Component deleted'); await load(); }
+    catch (e) { setErr(e instanceof Error ? e.message : 'Could not delete that component.'); }
+    finally { setBusy(''); }
+  };
+  const assign = async (values: { asset_id: string; qty: number }) => {
+    if (!assigning) return;
+    setBusy(assigning.id); setErr('');
+    try { await api('/components/assign', token, { method: 'POST', body: { organization_id: organizationId, component_id: assigning.id, ...values } }); toast('Component assigned'); setAssigning(null); await load(); }
+    catch (e) { setErr(e instanceof Error ? e.message : 'Could not assign that component.'); }
+    finally { setBusy(''); }
+  };
+  const checkin = async (a: ComponentAssignment) => {
+    setBusy(a.id); setErr('');
+    try { await api(`/components/assignments/${a.id}/checkin`, token, { method: 'POST', body: { organization_id: organizationId } }); toast('Component checked in'); await load(); }
+    catch (e) { setErr(e instanceof Error ? e.message : 'Could not check in that component.'); }
+    finally { setBusy(''); }
+  };
+  const t = useTable(rows, (c, k) => k === 'available' ? c.total_qty - assignedFor(c.id) : (c as any)[k]);
+  const assetLabel = (id: string) => { const a = assets.find(x => x.id === id); return a ? `${a.asset_tag} — ${a.name}` : '—'; };
+  return <>
+    <Flash kind="error" msg={err}/>
+    <div className="stats-grid">
+      <StatCard icon={<Boxes size={15}/>} tone="blue" label="Component types" value={rows.length}/>
+      <StatCard icon={<UserCheck size={15}/>} tone="green" label="Units assigned" value={assignments.reduce((s, a) => s + a.qty, 0)}/>
+      <StatCard icon={<Archive size={15}/>} tone="purple" label="Total units" value={rows.reduce((s, c) => s + c.total_qty, 0)}/>
+      <StatCard icon={<CircleAlert size={15}/>} tone="orange" label="Low stock" value={rows.filter(c => c.min_qty != null && (c.total_qty - assignedFor(c.id)) <= c.min_qty).length}/>
+    </div>
+    <section className="panel page-panel"><div className="panel-head"><div><h3>Components</h3><p>{rows.length} component type{rows.length === 1 ? '' : 's'} · assigned by quantity to specific assets.</p></div>
+      {isOp(role) && <button className="primary-action" onClick={() => setEditing('new')}><Plus size={15}/>Add component</button>}</div>
+      {loading ? <Skeleton rows={3}/> : !t.rows.length ? <EmptyState icon={<Boxes size={22}/>} title="No components yet" text="Add parts like RAM or drives and assign them to the assets using them."/> : <><div className="table-wrap"><table>
+        <thead><tr><Th t={t} k="name">NAME</Th><Th t={t} k="available">AVAILABLE</Th><th>ASSIGNED TO</th><th>ACTIONS</th></tr></thead>
+        <tbody>{t.rows.map(c => { const active = assignments.filter(a => a.component_id === c.id); const used = active.reduce((s, a) => s + a.qty, 0); const available = c.total_qty - used;
+          return <tr key={c.id}>
+          <td><b>{c.name}</b>{c.vendor && <div className="muted">{c.vendor}</div>}</td>
+          <td><span className={`status-pill ${available <= 0 ? 'offline' : 'online'}`}><i/>{available} / {c.total_qty}</span></td>
+          <td>{active.length ? <div className="checkout-list">{active.map(a => <div key={a.id} className="checkout-row"><span>{assetLabel(a.asset_id)} ×{a.qty}</span>{isOp(role) && <button className="mini-icon" title="Check in" disabled={busy === a.id} onClick={() => checkin(a)}><Check size={13}/></button>}</div>)}</div> : '—'}</td>
+          <td><div className="row-actions">
+            {isOp(role) && available > 0 && <button className="secondary-action" disabled={!!busy} onClick={() => setAssigning(c)}>Assign to asset</button>}
+            {isOp(role) && <button className="mini-icon" title="Edit" disabled={busy === c.id} onClick={() => setEditing(c)}><Pencil size={15}/></button>}
+            {isOp(role) && <button className="mini-icon danger" title="Delete" disabled={busy === c.id} onClick={() => remove(c)}><Trash2 size={15}/></button>}
+          </div></td>
+        </tr>; })}</tbody>
+      </table></div><Pager t={t}/></>}
+    </section>
+    {editing && <ComponentModal component={editing === 'new' ? null : editing} sites={sites} busy={!!busy} onSave={values => save(values, editing === 'new' ? undefined : editing.id)} onClose={() => setEditing(null)}/>}
+    {assigning && <ComponentAssignModal component={assigning} assets={assets} busy={!!busy} onSave={assign} onClose={() => setAssigning(null)}/>}
+  </>;
+}
+function ComponentModal({ component, sites, busy, onSave, onClose }: { component: Component | null; sites: { id: string; name: string }[]; busy: boolean; onSave: (v: Partial<Component>) => void; onClose: () => void }) {
+  const [v, setV] = useState<Partial<Component>>(component ?? { name: '', total_qty: 1 });
+  const set = (k: keyof Component, val: any) => setV(prev => ({ ...prev, [k]: val }));
+  return <Modal title={component ? 'Edit component' : 'Add component'} subtitle={component?.name} icon={<Boxes size={17}/>} onClose={onClose}>
+    <form className="modal-form" onSubmit={e => { e.preventDefault(); onSave(v); }}>
+      <label>Name<input value={v.name ?? ''} onChange={e => set('name', e.target.value)} required maxLength={120} placeholder="16GB DDR4 RAM"/></label>
+      <label>Total quantity<input type="number" min={0} value={v.total_qty ?? 1} onChange={e => set('total_qty', Number(e.target.value))} required/></label>
+      <label>Low-stock alert at <em className="optional">Optional</em><input type="number" min={0} value={v.min_qty ?? ''} onChange={e => set('min_qty', e.target.value === '' ? null : Number(e.target.value))}/></label>
+      <label>Site <em className="optional">Optional</em><Select value={v.site_id ?? ''} onChange={e => set('site_id', e.target.value || null)}><option value="">None</option>{sites.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}</Select></label>
+      <label>Vendor<input value={v.vendor ?? ''} onChange={e => set('vendor', e.target.value)} maxLength={120}/></label>
+      <label>Purchase date<input type="date" value={v.purchase_date ?? ''} onChange={e => set('purchase_date', e.target.value || null)}/></label>
+      <label className="span-2">Notes<input value={v.notes ?? ''} onChange={e => set('notes', e.target.value)} maxLength={500}/></label>
+      <div className="modal-actions span-2"><button type="button" className="secondary-action" onClick={onClose} disabled={busy}>Cancel</button><button className="primary-action" disabled={busy || !v.name?.trim() || v.total_qty == null || v.total_qty < 0}>{busy ? 'Saving…' : component ? 'Save changes' : 'Add component'}</button></div>
+    </form>
+  </Modal>;
+}
+function ComponentAssignModal({ component, assets, busy, onSave, onClose }: { component: Component; assets: { id: string; asset_tag: string; name: string }[]; busy: boolean; onSave: (v: { asset_id: string; qty: number }) => void; onClose: () => void }) {
+  const [assetId, setAssetId] = useState(''); const [qty, setQty] = useState(1);
+  return <Modal title={`Assign "${component.name}" to an asset`} icon={<UserCheck size={17}/>} onClose={onClose}>
+    <form className="modal-form" onSubmit={e => { e.preventDefault(); onSave({ asset_id: assetId, qty }); }}>
+      <label>Asset<Select value={assetId} onChange={e => setAssetId(e.target.value)}><option value="">Choose an asset</option>{assets.map(a => <option key={a.id} value={a.id}>{a.asset_tag} — {a.name}</option>)}</Select></label>
+      <label>Quantity<input type="number" min={1} value={qty} onChange={e => setQty(Math.max(1, Number(e.target.value)))} required/></label>
+      <div className="modal-actions span-2"><button type="button" className="secondary-action" onClick={onClose} disabled={busy}>Cancel</button><button className="primary-action" disabled={busy || !assetId}>{busy ? 'Assigning…' : 'Assign'}</button></div>
     </form>
   </Modal>;
 }
