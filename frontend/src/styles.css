@@ -1339,6 +1339,9 @@ th{background:rgba(255,255,255,.025)!important}
 .perm-row [role=rowheader]{color:#e6e6ea;font-weight:500}
 .perm-row-label{display:flex;align-items:center;gap:8px}
 .perm-row-label svg{flex-shrink:0;color:var(--muted2)}
+.checkout-list{display:flex;flex-direction:column;gap:4px}
+.checkout-row{display:flex;align-items:center;gap:8px;font-size:12px}
+.checkout-row span{color:#c9d3e3}
 .modal-form label.perm-cell,.perm-cell{display:grid!important;place-items:center;justify-self:center;width:40px;height:40px;margin:0;cursor:pointer}
 .perm-cell input{position:absolute;opacity:0;pointer-events:none}
 .perm-box{width:20px;height:20px;display:grid;place-items:center;border-radius:6px;border:1.5px solid rgba(255,255,255,.25);color:transparent;transition:background .12s,border-color .12s,color .12s}

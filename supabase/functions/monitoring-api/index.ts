@@ -1236,6 +1236,101 @@ async function handle(req: Request): Promise<Response> {
     return json({ ok: true, asset_id: assetId });
   }
 
+  // ---- Accessories (Snipe-IT style: checked out by quantity, no asset tag) -------------------
+  if (req.method === "GET" && path === "/accessories") {
+    const organizationId = url.searchParams.get("organization_id") || "";
+    await requirePermission(req, organizationId, "assets", "view");
+    const [{ data: accessories, error }, { data: checkouts }] = await Promise.all([
+      admin.from("accessories").select("*").eq("organization_id", organizationId).order("created_at", { ascending: false }),
+      admin.from("accessory_checkouts").select("*").eq("organization_id", organizationId).is("checked_in_at", null),
+    ]);
+    if (error) return fail("Could not load accessories", 500);
+    return json({ accessories: accessories || [], checkouts: checkouts || [] });
+  }
+
+  if (req.method === "POST" && path === "/accessories") {
+    const body = await readJson(req);
+    const organizationId = String(body.organization_id || "");
+    const { user } = await requirePermission(req, organizationId, "assets", "create");
+    const name = String(body.name || "").trim();
+    if (!name) return fail("Name is required");
+    const row = {
+      organization_id: organizationId, name, category: String(body.category || "other"),
+      total_qty: Math.max(0, Number(body.total_qty) || 1),
+      min_qty: body.min_qty === "" || body.min_qty == null ? null : Math.max(0, Number(body.min_qty) || 0),
+      site_id: body.site_id || null, vendor: body.vendor ? String(body.vendor).trim() : null,
+      purchase_date: body.purchase_date || null, notes: body.notes ? String(body.notes).trim() : null,
+    };
+    const { data, error } = await admin.from("accessories").insert(row).select("*").single();
+    if (error) return fail("Could not create accessory", 500);
+    await audit(organizationId, "user", user.id, "create_accessory", "accessory", data.id, { name });
+    return json({ ok: true, accessory: data }, 201);
+  }
+
+  const accessoryIdMatch = path.match(new RegExp(`^/accessories/${uuidPart}$`, "i"));
+  if (req.method === "PUT" && accessoryIdMatch) {
+    const accessoryId = accessoryIdMatch[1];
+    const body = await readJson(req);
+    const organizationId = String(body.organization_id || "");
+    const { user } = await requirePermission(req, organizationId, "assets", "edit");
+    const { data: existing } = await admin.from("accessories").select("id").eq("id", accessoryId).eq("organization_id", organizationId).maybeSingle();
+    if (!existing) return fail("Accessory not found in this workspace", 404);
+    const patch: Record<string, unknown> = { updated_at: new Date().toISOString() };
+    for (const k of ["name", "category", "total_qty", "min_qty", "site_id", "vendor", "purchase_date", "notes"]) {
+      if (body[k] !== undefined) patch[k] = typeof body[k] === "string" ? body[k].trim() || null : body[k];
+    }
+    const { data, error } = await admin.from("accessories").update(patch).eq("id", accessoryId).select("*").single();
+    if (error) return fail("Could not update accessory", 500);
+    await audit(organizationId, "user", user.id, "update_accessory", "accessory", accessoryId, {});
+    return json({ ok: true, accessory: data });
+  }
+
+  if (req.method === "DELETE" && accessoryIdMatch) {
+    const accessoryId = accessoryIdMatch[1];
+    const organizationId = url.searchParams.get("organization_id") || "";
+    const { user } = await requirePermission(req, organizationId, "assets", "delete");
+    const { data: existing } = await admin.from("accessories").select("id").eq("id", accessoryId).eq("organization_id", organizationId).maybeSingle();
+    if (!existing) return fail("Accessory not found in this workspace", 404);
+    const { error } = await admin.from("accessories").delete().eq("id", accessoryId);
+    if (error) return fail("Could not delete accessory", 500);
+    await audit(organizationId, "user", user.id, "delete_accessory", "accessory", accessoryId, {});
+    return json({ ok: true, accessory_id: accessoryId });
+  }
+
+  if (req.method === "POST" && path === "/accessories/checkout") {
+    const body = await readJson(req);
+    const organizationId = String(body.organization_id || "");
+    const { user } = await requirePermission(req, organizationId, "assets", "edit");
+    const accessoryId = String(body.accessory_id || "");
+    const { data: accessory } = await admin.from("accessories").select("id,total_qty").eq("id", accessoryId).eq("organization_id", organizationId).maybeSingle();
+    if (!accessory) return fail("Accessory not found in this workspace", 404);
+    const { count: outCount } = await admin.from("accessory_checkouts").select("id", { count: "exact", head: true }).eq("accessory_id", accessoryId).is("checked_in_at", null);
+    if ((outCount || 0) >= accessory.total_qty) return fail("No units available to check out", 409);
+    const assignedUserId = body.assigned_user_id || null;
+    const assignedTo = body.assigned_to ? String(body.assigned_to).trim() : null;
+    if (!assignedUserId && !assignedTo) return fail("Choose who this is being checked out to");
+    const { data, error } = await admin.from("accessory_checkouts").insert({
+      organization_id: organizationId, accessory_id: accessoryId, assigned_user_id: assignedUserId, assigned_to: assignedTo,
+    }).select("*").single();
+    if (error) return fail("Could not check out that accessory", 500);
+    await audit(organizationId, "user", user.id, "checkout_accessory", "accessory", accessoryId, {});
+    return json({ ok: true, checkout: data }, 201);
+  }
+
+  const accessoryCheckinMatch = path.match(new RegExp(`^/accessories/checkouts/${uuidPart}/checkin$`, "i"));
+  if (req.method === "POST" && accessoryCheckinMatch) {
+    const checkoutId = accessoryCheckinMatch[1];
+    const body = await readJson(req);
+    const organizationId = String(body.organization_id || "");
+    const { user } = await requirePermission(req, organizationId, "assets", "edit");
+    const { data: existing } = await admin.from("accessory_checkouts").select("id,accessory_id").eq("id", checkoutId).eq("organization_id", organizationId).is("checked_in_at", null).maybeSingle();
+    if (!existing) return fail("Active checkout not found", 404);
+    const { error } = await admin.from("accessory_checkouts").update({ checked_in_at: new Date().toISOString() }).eq("id", checkoutId);
+    if (error) return fail("Could not check in that accessory", 500);
+    await audit(organizationId, "user", user.id, "checkin_accessory", "accessory", existing.accessory_id, {});
+    return json({ ok: true, checkout_id: checkoutId });
+  }
+
   // ---- Tickets (GLPI style helpdesk) ----------------------------------------------------------
   if (req.method === "GET" && path === "/tickets") {
     const organizationId = url.searchParams.get("organization_id") || "";
