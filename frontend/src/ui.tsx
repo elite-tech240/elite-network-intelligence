@@ -86,7 +86,16 @@ export function Select({ value, onChange, children, className = '', disabled, id
   };
   useEffect(() => {
     if (!open) return;
-    const off = (e: MouseEvent) => { if (!box.current?.contains(e.target as Node)) setOpen(false); };
+    // The option list renders through a portal straight onto document.body (so it can escape a
+    // modal's clipped/scrolling container), so it is never a DOM descendant of `box` - checking
+    // only `box.contains(target)` closed the menu on every mousedown inside it, a split second
+    // before the option's own click handler could fire, so choosing an option silently did nothing.
+    const off = (e: MouseEvent) => {
+      const target = e.target as Node;
+      if (box.current?.contains(target)) return;
+      if (target instanceof Element && target.closest('.select-menu.portal')) return;
+      setOpen(false);
+    };
     const onScrollOrResize = () => reposition();
     document.addEventListener('mousedown', off);
     window.addEventListener('scroll', onScrollOrResize, true);

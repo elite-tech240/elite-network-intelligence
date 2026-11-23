@@ -317,8 +317,13 @@ function DevicesPage({devices,archivedDevices,loading,organizationId,role,access
  const canManage=['owner','admin'].includes(role);
  const [latestVersion,setLatestVersion]=useState(LATEST_AGENT_VERSION),[updBusy,setUpdBusy]=useState(false);
  useEffect(()=>{void publishedAgentVersion().then(setLatestVersion);},[]);
- const outdated=devices.filter(d=>d.agent_version!==latestVersion&&versionAtLeast(d.agent_version,SELF_UPDATE_FROM));
- const needManual=devices.filter(d=>d.agent_version!==latestVersion&&!versionAtLeast(d.agent_version,SELF_UPDATE_FROM));
+ // "Behind" means never reported (treated as pre-dating the published release) or strictly
+ // older than it - not merely different from it, since a device already running something newer
+ // than latestVersion (a dev/manual install ahead of the published installer) must never be
+ // offered a "downgrade" that looks like an update.
+ const isBehindLatest=(v:string|null|undefined)=>!v||(v!==latestVersion&&versionAtLeast(latestVersion,v));
+ const outdated=devices.filter(d=>isBehindLatest(d.agent_version)&&versionAtLeast(d.agent_version,SELF_UPDATE_FROM));
+ const needManual=devices.filter(d=>isBehindLatest(d.agent_version)&&!versionAtLeast(d.agent_version,SELF_UPDATE_FROM));
  const updateAll=async()=>{
    if(!supabase)return;
    const ok=await confirmDialog(`Send the update to ${latestVersion} to ${outdated.length} device${outdated.length===1?'':'s'}? Only devices reporting right now will pick it up.`,{title:'Update outdated agents',confirmText:'Send update'});

@@ -283,8 +283,10 @@ export function DeviceDetail({ devices, initialId }: { devices: Dev[]; initialId
   }, [id]);
   useEffect(() => { void loadUpgrade(); }, [loadUpgrade]);
   useTick(() => void loadUpgrade(), 10000, [loadUpgrade]);
-  // an agent that never reported its version is running something older than the published build
-  const outdated = !!dev && dev.agent_version !== latestVersion;
+  // An agent that never reported its version is running something older than the published
+  // build; one that did must be strictly older, not merely different - a dev/manual install can
+  // legitimately be ahead of the published release and must not look "outdated".
+  const outdated = !!dev && (!dev.agent_version || (dev.agent_version !== latestVersion && versionAtLeast(latestVersion, dev.agent_version)));
   // Older agents never learned the upgrade command, so queueing one would go nowhere.
   const canSelfUpdate = versionAtLeast(dev?.agent_version, SELF_UPDATE_FROM);
   const inFlight = upgrade && ['queued', 'delivered', 'running'].includes(upgrade.status);
