@@ -386,8 +386,10 @@ type Asset = { id: string; asset_tag: string; name: string; category: string; st
 export function AssetsPage(props: { organizationId: string; role: Role; token: string; devices: Dev[]; sites: { id: string; name: string }[] }) {
   const [module, setModule] = useState('assets');
   return <div className="sites-workspace">
-    <div className="filter-bar"><Tabs items={[{ id: 'assets', label: 'Assets' }, { id: 'accessories', label: 'Accessories' }]} active={module} onChange={setModule}/></div>
-    {module === 'assets' ? <AssetsInventoryPage {...props}/> : <AccessoriesPage organizationId={props.organizationId} role={props.role} token={props.token} sites={props.sites}/>}
+    <div className="filter-bar"><Tabs items={[{ id: 'assets', label: 'Assets' }, { id: 'accessories', label: 'Accessories' }, { id: 'consumables', label: 'Consumables' }]} active={module} onChange={setModule}/></div>
+    {module === 'assets' && <AssetsInventoryPage {...props}/>}
+    {module === 'accessories' && <AccessoriesPage organizationId={props.organizationId} role={props.role} token={props.token} sites={props.sites}/>}
+    {module === 'consumables' && <ConsumablesPage organizationId={props.organizationId} role={props.role} token={props.token} sites={props.sites}/>}
   </div>;
 }
 function AssetsInventoryPage({ organizationId, role, token, devices, sites }: { organizationId: string; role: Role; token: string; devices: Dev[]; sites: { id: string; name: string }[] }) {
@@ -591,6 +593,105 @@ function AccessoryCheckoutModal({ accessory, members, busy, onSave, onClose }: {
       <label>Check out to (user)<Select value={userId} onChange={e => setUserId(e.target.value)}><option value="">Choose a member</option>{members.map(m => <option key={m.user_id} value={m.user_id}>{m.email}</option>)}</Select></label>
       <label>Or free text <em className="optional">Optional</em><input value={freeText} onChange={e => setFreeText(e.target.value)} maxLength={120} placeholder="Outside contact, or leave blank"/></label>
       <div className="modal-actions span-2"><button type="button" className="secondary-action" onClick={onClose} disabled={busy}>Cancel</button><button className="primary-action" disabled={busy || (!userId && !freeText.trim())}>{busy ? 'Checking out…' : 'Check out'}</button></div>
+    </form>
+  </Modal>;
+}
+
+// ---- Consumables (Snipe-IT style: quantity depletes on use, never checked back in) ------------
+type Consumable = { id: string; name: string; category: string; total_qty: number; min_qty: number | null; site_id: string | null; vendor: string | null; purchase_date: string | null; notes: string | null };
+type ConsumableUse = { id: string; consumable_id: string; assigned_user_id: string | null; assigned_to: string | null; qty: number; used_at: string };
+function ConsumablesPage({ organizationId, role, token, sites }: { organizationId: string; role: Role; token: string; sites: { id: string; name: string }[] }) {
+  const members = useOrgMembers(organizationId, token);
+  const [rows, setRows] = useState<Consumable[]>([]); const [uses, setUses] = useState<ConsumableUse[]>([]);
+  const [loading, setLoading] = useState(true); const [err, setErr] = useState('');
+  const [editing, setEditing] = useState<Consumable | 'new' | null>(null); const [using, setUsing] = useState<Consumable | null>(null); const [busy, setBusy] = useState('');
+  const load = useCallback(async () => {
+    setLoading(true); setErr('');
+    try { const r = await api<{ consumables: Consumable[]; uses: ConsumableUse[] }>(`/consumables?organization_id=${organizationId}`, token); setRows(r.consumables); setUses(r.uses); }
+    catch (e) { setErr(e instanceof Error ? e.message : 'Could not load consumables.'); }
+    finally { setLoading(false); }
+  }, [organizationId, token]);
+  useEffect(() => { void load(); }, [load]);
+  const usedFor = (id: string) => uses.filter(u => u.consumable_id === id).reduce((s, u) => s + u.qty, 0);
+  const save = async (values: Partial<Consumable>, id?: string) => {
+    setBusy(id || 'new'); setErr('');
+    try {
+      if (id) await api(`/consumables/${id}`, token, { method: 'PUT', body: { organization_id: organizationId, ...values } });
+      else await api('/consumables', token, { method: 'POST', body: { organization_id: organizationId, ...values } });
+      toast(id ? 'Consumable updated' : 'Consumable created'); setEditing(null); await load();
+    } catch (e) { setErr(e instanceof Error ? e.message : 'Could not save that consumable.'); }
+    finally { setBusy(''); }
+  };
+  const remove = async (c: Consumable) => {
+    if (!await confirmDialog(`Delete consumable "${c.name}"?`, { confirmText: 'Delete', danger: true })) return;
+    setBusy(c.id); setErr('');
+    try { await api(`/consumables/${c.id}?organization_id=${organizationId}`, token, { method: 'DELETE' }); toast('Consumable deleted'); await load(); }
+    catch (e) { setErr(e instanceof Error ? e.message : 'Could not delete that consumable.'); }
+    finally { setBusy(''); }
+  };
+  const use = async (values: { qty: number; assigned_user_id?: string | null; assigned_to?: string }) => {
+    if (!using) return;
+    setBusy(using.id); setErr('');
+    try { await api('/consumables/use', token, { method: 'POST', body: { organization_id: organizationId, consumable_id: using.id, ...values } }); toast('Use recorded'); setUsing(null); await load(); }
+    catch (e) { setErr(e instanceof Error ? e.message : 'Could not record that use.'); }
+    finally { setBusy(''); }
+  };
+  const t = useTable(rows, (c, k) => k === 'available' ? c.total_qty - usedFor(c.id) : (c as any)[k]);
+  const lowStock = rows.filter(c => c.min_qty != null && (c.total_qty - usedFor(c.id)) <= c.min_qty).length;
+  return <>
+    <Flash kind="error" msg={err}/>
+    <div className="stats-grid">
+      <StatCard icon={<Boxes size={15}/>} tone="blue" label="Consumable types" value={rows.length}/>
+      <StatCard icon={<UserCheck size={15}/>} tone="green" label="Units used" value={uses.reduce((s, u) => s + u.qty, 0)}/>
+      <StatCard icon={<Archive size={15}/>} tone="purple" label="Total units" value={rows.reduce((s, c) => s + c.total_qty, 0)}/>
+      <StatCard icon={<CircleAlert size={15}/>} tone="orange" label="Low stock" value={lowStock}/>
+    </div>
+    <section className="panel page-panel"><div className="panel-head"><div><h3>Consumables</h3><p>{rows.length} type{rows.length === 1 ? '' : 's'} · used up by quantity, never checked back in.</p></div>
+      {isOp(role) && <button className="primary-action" onClick={() => setEditing('new')}><Plus size={15}/>Add consumable</button>}</div>
+      {loading ? <Skeleton rows={3}/> : !t.rows.length ? <EmptyState icon={<Boxes size={22}/>} title="No consumables yet" text="Add paper, toner, cables and other items that get used up rather than returned."/> : <><div className="table-wrap"><table>
+        <thead><tr><Th t={t} k="name">NAME</Th><Th t={t} k="category">CATEGORY</Th><Th t={t} k="available">AVAILABLE</Th><th>ACTIONS</th></tr></thead>
+        <tbody>{t.rows.map(c => { const available = c.total_qty - usedFor(c.id);
+          return <tr key={c.id}>
+          <td><b>{c.name}</b>{c.vendor && <div className="muted">{c.vendor}</div>}</td>
+          <td>{ASSET_CATEGORIES.find(a => a.value === c.category)?.label ?? c.category}</td>
+          <td><span className={`status-pill ${available <= 0 ? 'offline' : c.min_qty != null && available <= c.min_qty ? 'pending' : 'online'}`}><i/>{available} / {c.total_qty}</span></td>
+          <td><div className="row-actions">
+            {isOp(role) && available > 0 && <button className="secondary-action" disabled={!!busy} onClick={() => setUsing(c)}>Record use</button>}
+            {isOp(role) && <button className="mini-icon" title="Edit" disabled={busy === c.id} onClick={() => setEditing(c)}><Pencil size={15}/></button>}
+            {isOp(role) && <button className="mini-icon danger" title="Delete" disabled={busy === c.id} onClick={() => remove(c)}><Trash2 size={15}/></button>}
+          </div></td>
+        </tr>; })}</tbody>
+      </table></div><Pager t={t}/></>}
+    </section>
+    {editing && <ConsumableModal consumable={editing === 'new' ? null : editing} sites={sites} busy={!!busy} onSave={values => save(values, editing === 'new' ? undefined : editing.id)} onClose={() => setEditing(null)}/>}
+    {using && <ConsumableUseModal consumable={using} members={members} busy={!!busy} onSave={use} onClose={() => setUsing(null)}/>}
+  </>;
+}
+function ConsumableModal({ consumable, sites, busy, onSave, onClose }: { consumable: Consumable | null; sites: { id: string; name: string }[]; busy: boolean; onSave: (v: Partial<Consumable>) => void; onClose: () => void }) {
+  const [v, setV] = useState<Partial<Consumable>>(consumable ?? { name: '', category: 'other', total_qty: 1 });
+  const set = (k: keyof Consumable, val: any) => setV(prev => ({ ...prev, [k]: val }));
+  return <Modal title={consumable ? 'Edit consumable' : 'Add consumable'} subtitle={consumable?.name} icon={<Boxes size={17}/>} onClose={onClose}>
+    <form className="modal-form" onSubmit={e => { e.preventDefault(); onSave(v); }}>
+      <label>Name<input value={v.name ?? ''} onChange={e => set('name', e.target.value)} required maxLength={120} placeholder="A4 paper ream"/></label>
+      <label>Category<Select value={v.category ?? 'other'} onChange={e => set('category', e.target.value)}>{ASSET_CATEGORIES.map(c => <option key={c.value} value={c.value}>{c.label}</option>)}</Select></label>
+      <label>Total quantity<input type="number" min={0} value={v.total_qty ?? 1} onChange={e => set('total_qty', Number(e.target.value))} required/></label>
+      <label>Low-stock threshold <em className="optional">Optional</em><input type="number" min={0} value={v.min_qty ?? ''} onChange={e => set('min_qty', e.target.value === '' ? null : Number(e.target.value))}/></label>
+      <label>Site <em className="optional">Optional</em><Select value={v.site_id ?? ''} onChange={e => set('site_id', e.target.value || null)}><option value="">None</option>{sites.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}</Select></label>
+      <label>Vendor<input value={v.vendor ?? ''} onChange={e => set('vendor', e.target.value)} maxLength={120} placeholder="Staples"/></label>
+      <label>Purchase date<input type="date" value={v.purchase_date ?? ''} onChange={e => set('purchase_date', e.target.value || null)}/></label>
+      <label className="span-2">Notes<input value={v.notes ?? ''} onChange={e => set('notes', e.target.value)} maxLength={500}/></label>
+      <div className="modal-actions span-2"><button type="button" className="secondary-action" onClick={onClose} disabled={busy}>Cancel</button><button className="primary-action" disabled={busy || !v.name?.trim() || !v.total_qty || v.total_qty < 0}>{busy ? 'Saving…' : consumable ? 'Save changes' : 'Add consumable'}</button></div>
+    </form>
+  </Modal>;
+}
+function ConsumableUseModal({ consumable, members, busy, onSave, onClose }: { consumable: Consumable; members: OrgMember[]; busy: boolean; onSave: (v: { qty: number; assigned_user_id?: string | null; assigned_to?: string }) => void; onClose: () => void }) {
+  const [qty, setQty] = useState(1); const [userId, setUserId] = useState(''); const [freeText, setFreeText] = useState('');
+  return <Modal title={`Record use of "${consumable.name}"`} icon={<UserCheck size={17}/>} onClose={onClose}>
+    <form className="modal-form" onSubmit={e => { e.preventDefault(); onSave({ qty, assigned_user_id: userId || null, assigned_to: freeText }); }}>
+      <label>Quantity used<input type="number" min={1} value={qty} onChange={e => setQty(Math.max(1, Number(e.target.value)))} required/></label>
+      <label>Used by (user) <em className="optional">Optional</em><Select value={userId} onChange={e => setUserId(e.target.value)}><option value="">Choose a member</option>{members.map(m => <option key={m.user_id} value={m.user_id}>{m.email}</option>)}</Select></label>
+      <label>Or free text <em className="optional">Optional</em><input value={freeText} onChange={e => setFreeText(e.target.value)} maxLength={120} placeholder="Outside contact, or leave blank"/></label>
+      <div className="modal-actions span-2"><button type="button" className="secondary-action" onClick={onClose} disabled={busy}>Cancel</button><button className="primary-action" disabled={busy || qty < 1}>{busy ? 'Recording…' : 'Record use'}</button></div>
     </form>
   </Modal>;
 }

@@ -1331,6 +1331,88 @@ async function handle(req: Request): Promise<Response> {
     return json({ ok: true, checkout_id: checkoutId });
   }
 
+  // ---- Consumables (Snipe-IT style: quantity depletes on use, no check-in) -------------------
+  if (req.method === "GET" && path === "/consumables") {
+    const organizationId = url.searchParams.get("organization_id") || "";
+    await requirePermission(req, organizationId, "assets", "view");
+    const [{ data: consumables, error }, { data: uses }] = await Promise.all([
+      admin.from("consumables").select("*").eq("organization_id", organizationId).order("created_at", { ascending: false }),
+      admin.from("consumable_uses").select("*").eq("organization_id", organizationId).order("used_at", { ascending: false }),
+    ]);
+    if (error) return fail("Could not load consumables", 500);
+    return json({ consumables: consumables || [], uses: uses || [] });
+  }
+
+  if (req.method === "POST" && path === "/consumables") {
+    const body = await readJson(req);
+    const organizationId = String(body.organization_id || "");
+    const { user } = await requirePermission(req, organizationId, "assets", "create");
+    const name = String(body.name || "").trim();
+    if (!name) return fail("Name is required");
+    const row = {
+      organization_id: organizationId, name, category: String(body.category || "other"),
+      total_qty: Math.max(0, Number(body.total_qty) || 1),
+      min_qty: body.min_qty === "" || body.min_qty == null ? null : Math.max(0, Number(body.min_qty) || 0),
+      site_id: body.site_id || null, vendor: body.vendor ? String(body.vendor).trim() : null,
+      purchase_date: body.purchase_date || null, notes: body.notes ? String(body.notes).trim() : null,
+    };
+    const { data, error } = await admin.from("consumables").insert(row).select("*").single();
+    if (error) return fail("Could not create consumable", 500);
+    await audit(organizationId, "user", user.id, "create_consumable", "consumable", data.id, { name });
+    return json({ ok: true, consumable: data }, 201);
+  }
+
+  const consumableIdMatch = path.match(new RegExp(`^/consumables/${uuidPart}$`, "i"));
+  if (req.method === "PUT" && consumableIdMatch) {
+    const consumableId = consumableIdMatch[1];
+    const body = await readJson(req);
+    const organizationId = String(body.organization_id || "");
+    const { user } = await requirePermission(req, organizationId, "assets", "edit");
+    const { data: existing } = await admin.from("consumables").select("id").eq("id", consumableId).eq("organization_id", organizationId).maybeSingle();
+    if (!existing) return fail("Consumable not found in this workspace", 404);
+    const patch: Record<string, unknown> = { updated_at: new Date().toISOString() };
+    for (const k of ["name", "category", "total_qty", "min_qty", "site_id", "vendor", "purchase_date", "notes"]) {
+      if (body[k] !== undefined) patch[k] = typeof body[k] === "string" ? body[k].trim() || null : body[k];
+    }
+    const { data, error } = await admin.from("consumables").update(patch).eq("id", consumableId).select("*").single();
+    if (error) return fail("Could not update consumable", 500);
+    await audit(organizationId, "user", user.id, "update_consumable", "consumable", consumableId, {});
+    return json({ ok: true, consumable: data });
+  }
+
+  if (req.method === "DELETE" && consumableIdMatch) {
+    const consumableId = consumableIdMatch[1];
+    const organizationId = url.searchParams.get("organization_id") || "";
+    const { user } = await requirePermission(req, organizationId, "assets", "delete");
+    const { data: existing } = await admin.from("consumables").select("id").eq("id", consumableId).eq("organization_id", organizationId).maybeSingle();
+    if (!existing) return fail("Consumable not found in this workspace", 404);
+    const { error } = await admin.from("consumables").delete().eq("id", consumableId);
+    if (error) return fail("Could not delete consumable", 500);
+    await audit(organizationId, "user", user.id, "delete_consumable", "consumable", consumableId, {});
+    return json({ ok: true, consumable_id: consumableId });
+  }
+
+  if (req.method === "POST" && path === "/consumables/use") {
+    const body = await readJson(req);
+    const organizationId = String(body.organization_id || "");
+    const { user } = await requirePermission(req, organizationId, "assets", "edit");
+    const consumableId = String(body.consumable_id || "");
+    const qty = Math.max(1, Math.round(Number(body.qty) || 1));
+    const { data: consumable } = await admin.from("consumables").select("id,total_qty").eq("id", consumableId).eq("organization_id", organizationId).maybeSingle();
+    if (!consumable) return fail("Consumable not found in this workspace", 404);
+    const { data: priorUses } = await admin.from("consumable_uses").select("qty").eq("consumable_id", consumableId);
+    const usedSoFar = (priorUses || []).reduce((s: number, u: any) => s + u.qty, 0);
+    if (usedSoFar + qty > consumable.total_qty) return fail("Not enough units available", 409);
+    const assignedUserId = body.assigned_user_id || null;
+    const assignedTo = body.assigned_to ? String(body.assigned_to).trim() : null;
+    const { data, error } = await admin.from("consumable_uses").insert({
+      organization_id: organizationId, consumable_id: consumableId, assigned_user_id: assignedUserId, assigned_to: assignedTo, qty,
+    }).select("*").single();
+    if (error) return fail("Could not record that use", 500);
+    await audit(organizationId, "user", user.id, "use_consumable", "consumable", consumableId, { qty });
+    return json({ ok: true, use: data }, 201);
+  }
+
   // ---- Tickets (GLPI style helpdesk) ----------------------------------------------------------
   if (req.method === "GET" && path === "/tickets") {
     const organizationId = url.searchParams.get("organization_id") || "";
