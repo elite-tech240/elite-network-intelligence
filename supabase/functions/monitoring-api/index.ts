@@ -1413,6 +1413,101 @@ async function handle(req: Request): Promise<Response> {
     return json({ ok: true, use: data }, 201);
   }
 
+  // ---- Licenses (Snipe-IT style: seats checked out/in, with a key and expiry) ----------------
+  if (req.method === "GET" && path === "/licenses") {
+    const organizationId = url.searchParams.get("organization_id") || "";
+    await requirePermission(req, organizationId, "assets", "view");
+    const [{ data: licenses, error }, { data: seats }] = await Promise.all([
+      admin.from("licenses").select("*").eq("organization_id", organizationId).order("created_at", { ascending: false }),
+      admin.from("license_seats").select("*").eq("organization_id", organizationId).is("checked_in_at", null),
+    ]);
+    if (error) return fail("Could not load licenses", 500);
+    return json({ licenses: licenses || [], seats: seats || [] });
+  }
+
+  if (req.method === "POST" && path === "/licenses") {
+    const body = await readJson(req);
+    const organizationId = String(body.organization_id || "");
+    const { user } = await requirePermission(req, organizationId, "assets", "create");
+    const name = String(body.name || "").trim();
+    if (!name) return fail("Name is required");
+    const row = {
+      organization_id: organizationId, name, license_key: body.license_key ? String(body.license_key).trim() : null,
+      seats: Math.max(0, Number(body.seats) || 1),
+      site_id: body.site_id || null, vendor: body.vendor ? String(body.vendor).trim() : null,
+      purchase_date: body.purchase_date || null, expiration_date: body.expiration_date || null,
+      notes: body.notes ? String(body.notes).trim() : null,
+    };
+    const { data, error } = await admin.from("licenses").insert(row).select("*").single();
+    if (error) return fail("Could not create license", 500);
+    await audit(organizationId, "user", user.id, "create_license", "license", data.id, { name });
+    return json({ ok: true, license: data }, 201);
+  }
+
+  const licenseIdMatch = path.match(new RegExp(`^/licenses/${uuidPart}$`, "i"));
+  if (req.method === "PUT" && licenseIdMatch) {
+    const licenseId = licenseIdMatch[1];
+    const body = await readJson(req);
+    const organizationId = String(body.organization_id || "");
+    const { user } = await requirePermission(req, organizationId, "assets", "edit");
+    const { data: existing } = await admin.from("licenses").select("id").eq("id", licenseId).eq("organization_id", organizationId).maybeSingle();
+    if (!existing) return fail("License not found in this workspace", 404);
+    const patch: Record<string, unknown> = { updated_at: new Date().toISOString() };
+    for (const k of ["name", "license_key", "seats", "site_id", "vendor", "purchase_date", "expiration_date", "notes"]) {
+      if (body[k] !== undefined) patch[k] = typeof body[k] === "string" ? body[k].trim() || null : body[k];
+    }
+    const { data, error } = await admin.from("licenses").update(patch).eq("id", licenseId).select("*").single();
+    if (error) return fail("Could not update license", 500);
+    await audit(organizationId, "user", user.id, "update_license", "license", licenseId, {});
+    return json({ ok: true, license: data });
+  }
+
+  if (req.method === "DELETE" && licenseIdMatch) {
+    const licenseId = licenseIdMatch[1];
+    const organizationId = url.searchParams.get("organization_id") || "";
+    const { user } = await requirePermission(req, organizationId, "assets", "delete");
+    const { data: existing } = await admin.from("licenses").select("id").eq("id", licenseId).eq("organization_id", organizationId).maybeSingle();
+    if (!existing) return fail("License not found in this workspace", 404);
+    const { error } = await admin.from("licenses").delete().eq("id", licenseId);
+    if (error) return fail("Could not delete license", 500);
+    await audit(organizationId, "user", user.id, "delete_license", "license", licenseId, {});
+    return json({ ok: true, license_id: licenseId });
+  }
+
+  if (req.method === "POST" && path === "/licenses/checkout") {
+    const body = await readJson(req);
+    const organizationId = String(body.organization_id || "");
+    const { user } = await requirePermission(req, organizationId, "assets", "edit");
+    const licenseId = String(body.license_id || "");
+    const { data: license } = await admin.from("licenses").select("id,seats").eq("id", licenseId).eq("organization_id", organizationId).maybeSingle();
+    if (!license) return fail("License not found in this workspace", 404);
+    const { count: outCount } = await admin.from("license_seats").select("id", { count: "exact", head: true }).eq("license_id", licenseId).is("checked_in_at", null);
+    if ((outCount || 0) >= license.seats) return fail("No seats available to assign", 409);
+    const assignedUserId = body.assigned_user_id || null;
+    const assignedTo = body.assigned_to ? String(body.assigned_to).trim() : null;
+    if (!assignedUserId && !assignedTo) return fail("Choose who this seat is being assigned to");
+    const { data, error } = await admin.from("license_seats").insert({
+      organization_id: organizationId, license_id: licenseId, assigned_user_id: assignedUserId, assigned_to: assignedTo,
+    }).select("*").single();
+    if (error) return fail("Could not assign that seat", 500);
+    await audit(organizationId, "user", user.id, "checkout_license", "license", licenseId, {});
+    return json({ ok: true, seat: data }, 201);
+  }
+
+  const licenseCheckinMatch = path.match(new RegExp(`^/licenses/seats/${uuidPart}/checkin$`, "i"));
+  if (req.method === "POST" && licenseCheckinMatch) {
+    const seatId = licenseCheckinMatch[1];
+    const body = await readJson(req);
+    const organizationId = String(body.organization_id || "");
+    const { user } = await requirePermission(req, organizationId, "assets", "edit");
+    const { data: existing } = await admin.from("license_seats").select("id,license_id").eq("id", seatId).eq("organization_id", organizationId).is("checked_in_at", null).maybeSingle();
+    if (!existing) return fail("Active seat not found", 404);
+    const { error } = await admin.from("license_seats").update({ checked_in_at: new Date().toISOString() }).eq("id", seatId);
+    if (error) return fail("Could not release that seat", 500);
+    await audit(organizationId, "user", user.id, "checkin_license", "license", existing.license_id, {});
+    return json({ ok: true, seat_id: seatId });
+  }
+
   // ---- Tickets (GLPI style helpdesk) ----------------------------------------------------------
   if (req.method === "GET" && path === "/tickets") {
     const organizationId = url.searchParams.get("organization_id") || "";

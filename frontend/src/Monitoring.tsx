@@ -386,10 +386,11 @@ type Asset = { id: string; asset_tag: string; name: string; category: string; st
 export function AssetsPage(props: { organizationId: string; role: Role; token: string; devices: Dev[]; sites: { id: string; name: string }[] }) {
   const [module, setModule] = useState('assets');
   return <div className="sites-workspace">
-    <div className="filter-bar"><Tabs items={[{ id: 'assets', label: 'Assets' }, { id: 'accessories', label: 'Accessories' }, { id: 'consumables', label: 'Consumables' }]} active={module} onChange={setModule}/></div>
+    <div className="filter-bar"><Tabs items={[{ id: 'assets', label: 'Assets' }, { id: 'accessories', label: 'Accessories' }, { id: 'consumables', label: 'Consumables' }, { id: 'licenses', label: 'Licenses' }]} active={module} onChange={setModule}/></div>
     {module === 'assets' && <AssetsInventoryPage {...props}/>}
     {module === 'accessories' && <AccessoriesPage organizationId={props.organizationId} role={props.role} token={props.token} sites={props.sites}/>}
     {module === 'consumables' && <ConsumablesPage organizationId={props.organizationId} role={props.role} token={props.token} sites={props.sites}/>}
+    {module === 'licenses' && <LicensesPage organizationId={props.organizationId} role={props.role} token={props.token} sites={props.sites}/>}
   </div>;
 }
 function AssetsInventoryPage({ organizationId, role, token, devices, sites }: { organizationId: string; role: Role; token: string; devices: Dev[]; sites: { id: string; name: string }[] }) {
@@ -692,6 +693,113 @@ function ConsumableUseModal({ consumable, members, busy, onSave, onClose }: { co
       <label>Used by (user) <em className="optional">Optional</em><Select value={userId} onChange={e => setUserId(e.target.value)}><option value="">Choose a member</option>{members.map(m => <option key={m.user_id} value={m.user_id}>{m.email}</option>)}</Select></label>
       <label>Or free text <em className="optional">Optional</em><input value={freeText} onChange={e => setFreeText(e.target.value)} maxLength={120} placeholder="Outside contact, or leave blank"/></label>
       <div className="modal-actions span-2"><button type="button" className="secondary-action" onClick={onClose} disabled={busy}>Cancel</button><button className="primary-action" disabled={busy || qty < 1}>{busy ? 'Recording…' : 'Record use'}</button></div>
+    </form>
+  </Modal>;
+}
+
+// ---- Licenses (Snipe-IT style: seats checked out/in, with a key and expiry) -------------------
+type License = { id: string; name: string; license_key: string | null; seats: number; site_id: string | null; vendor: string | null; purchase_date: string | null; expiration_date: string | null; notes: string | null };
+type LicenseSeat = { id: string; license_id: string; assigned_user_id: string | null; assigned_to: string | null; checked_out_at: string };
+function LicensesPage({ organizationId, role, token, sites }: { organizationId: string; role: Role; token: string; sites: { id: string; name: string }[] }) {
+  const members = useOrgMembers(organizationId, token);
+  const [rows, setRows] = useState<License[]>([]); const [seats, setSeats] = useState<LicenseSeat[]>([]);
+  const [loading, setLoading] = useState(true); const [err, setErr] = useState('');
+  const [editing, setEditing] = useState<License | 'new' | null>(null); const [assigning, setAssigning] = useState<License | null>(null); const [busy, setBusy] = useState('');
+  const load = useCallback(async () => {
+    setLoading(true); setErr('');
+    try { const r = await api<{ licenses: License[]; seats: LicenseSeat[] }>(`/licenses?organization_id=${organizationId}`, token); setRows(r.licenses); setSeats(r.seats); }
+    catch (e) { setErr(e instanceof Error ? e.message : 'Could not load licenses.'); }
+    finally { setLoading(false); }
+  }, [organizationId, token]);
+  useEffect(() => { void load(); }, [load]);
+  const usedFor = (id: string) => seats.filter(s => s.license_id === id).length;
+  const save = async (values: Partial<License>, id?: string) => {
+    setBusy(id || 'new'); setErr('');
+    try {
+      if (id) await api(`/licenses/${id}`, token, { method: 'PUT', body: { organization_id: organizationId, ...values } });
+      else await api('/licenses', token, { method: 'POST', body: { organization_id: organizationId, ...values } });
+      toast(id ? 'License updated' : 'License created'); setEditing(null); await load();
+    } catch (e) { setErr(e instanceof Error ? e.message : 'Could not save that license.'); }
+    finally { setBusy(''); }
+  };
+  const remove = async (l: License) => {
+    if (!await confirmDialog(`Delete license "${l.name}"?`, { confirmText: 'Delete', danger: true })) return;
+    setBusy(l.id); setErr('');
+    try { await api(`/licenses/${l.id}?organization_id=${organizationId}`, token, { method: 'DELETE' }); toast('License deleted'); await load(); }
+    catch (e) { setErr(e instanceof Error ? e.message : 'Could not delete that license.'); }
+    finally { setBusy(''); }
+  };
+  const checkout = async (values: { assigned_user_id?: string | null; assigned_to?: string }) => {
+    if (!assigning) return;
+    setBusy(assigning.id); setErr('');
+    try { await api('/licenses/checkout', token, { method: 'POST', body: { organization_id: organizationId, license_id: assigning.id, ...values } }); toast('Seat assigned'); setAssigning(null); await load(); }
+    catch (e) { setErr(e instanceof Error ? e.message : 'Could not assign that seat.'); }
+    finally { setBusy(''); }
+  };
+  const checkin = async (s: LicenseSeat) => {
+    setBusy(s.id); setErr('');
+    try { await api(`/licenses/seats/${s.id}/checkin`, token, { method: 'POST', body: { organization_id: organizationId } }); toast('Seat released'); await load(); }
+    catch (e) { setErr(e instanceof Error ? e.message : 'Could not release that seat.'); }
+    finally { setBusy(''); }
+  };
+  const t = useTable(rows, (l, k) => k === 'available' ? l.seats - usedFor(l.id) : (l as any)[k]);
+  const memberEmail = (id: string | null) => id ? (members.find(m => m.user_id === id)?.email ?? '—') : null;
+  const expiringSoon = rows.filter(l => l.expiration_date && new Date(l.expiration_date).getTime() - Date.now() <= 30 * 24 * 3600 * 1000).length;
+  return <>
+    <Flash kind="error" msg={err}/>
+    <div className="stats-grid">
+      <StatCard icon={<Boxes size={15}/>} tone="blue" label="Licenses" value={rows.length}/>
+      <StatCard icon={<UserCheck size={15}/>} tone="green" label="Seats assigned" value={seats.length}/>
+      <StatCard icon={<Archive size={15}/>} tone="purple" label="Total seats" value={rows.reduce((s, l) => s + l.seats, 0)}/>
+      <StatCard icon={<CircleAlert size={15}/>} tone="orange" label="Expiring ≤30d" value={expiringSoon}/>
+    </div>
+    <section className="panel page-panel"><div className="panel-head"><div><h3>Licenses</h3><p>{rows.length} license{rows.length === 1 ? '' : 's'} · seats assigned to and released from members.</p></div>
+      {isOp(role) && <button className="primary-action" onClick={() => setEditing('new')}><Plus size={15}/>Add license</button>}</div>
+      {loading ? <Skeleton rows={3}/> : !t.rows.length ? <EmptyState icon={<Boxes size={22}/>} title="No licenses yet" text="Add software licenses and assign seats to the people using them."/> : <><div className="table-wrap"><table>
+        <thead><tr><Th t={t} k="name">NAME</Th><Th t={t} k="available">SEATS</Th><Th t={t} k="expiration_date">EXPIRES</Th><th>ASSIGNED TO</th><th>ACTIONS</th></tr></thead>
+        <tbody>{t.rows.map(l => { const active = seats.filter(s => s.license_id === l.id); const available = l.seats - active.length;
+          const expSoon = l.expiration_date && new Date(l.expiration_date).getTime() - Date.now() <= 30 * 24 * 3600 * 1000;
+          return <tr key={l.id}>
+          <td><b>{l.name}</b>{l.vendor && <div className="muted">{l.vendor}</div>}</td>
+          <td><span className={`status-pill ${available <= 0 ? 'offline' : 'online'}`}><i/>{available} / {l.seats}</span></td>
+          <td>{l.expiration_date ? <span className={expSoon ? 'muted' : undefined} style={expSoon ? { color: '#f5630f' } : undefined}>{l.expiration_date}</span> : '—'}</td>
+          <td>{active.length ? <div className="checkout-list">{active.map(s => <div key={s.id} className="checkout-row"><span>{memberEmail(s.assigned_user_id) ?? s.assigned_to}</span>{isOp(role) && <button className="mini-icon" title="Release seat" disabled={busy === s.id} onClick={() => checkin(s)}><Check size={13}/></button>}</div>)}</div> : '—'}</td>
+          <td><div className="row-actions">
+            {isOp(role) && available > 0 && <button className="secondary-action" disabled={!!busy} onClick={() => setAssigning(l)}>Assign seat</button>}
+            {isOp(role) && <button className="mini-icon" title="Edit" disabled={busy === l.id} onClick={() => setEditing(l)}><Pencil size={15}/></button>}
+            {isOp(role) && <button className="mini-icon danger" title="Delete" disabled={busy === l.id} onClick={() => remove(l)}><Trash2 size={15}/></button>}
+          </div></td>
+        </tr>; })}</tbody>
+      </table></div><Pager t={t}/></>}
+    </section>
+    {editing && <LicenseModal license={editing === 'new' ? null : editing} sites={sites} busy={!!busy} onSave={values => save(values, editing === 'new' ? undefined : editing.id)} onClose={() => setEditing(null)}/>}
+    {assigning && <LicenseCheckoutModal license={assigning} members={members} busy={!!busy} onSave={checkout} onClose={() => setAssigning(null)}/>}
+  </>;
+}
+function LicenseModal({ license, sites, busy, onSave, onClose }: { license: License | null; sites: { id: string; name: string }[]; busy: boolean; onSave: (v: Partial<License>) => void; onClose: () => void }) {
+  const [v, setV] = useState<Partial<License>>(license ?? { name: '', seats: 1 });
+  const set = (k: keyof License, val: any) => setV(prev => ({ ...prev, [k]: val }));
+  return <Modal title={license ? 'Edit license' : 'Add license'} subtitle={license?.name} icon={<Boxes size={17}/>} onClose={onClose}>
+    <form className="modal-form" onSubmit={e => { e.preventDefault(); onSave(v); }}>
+      <label>Name<input value={v.name ?? ''} onChange={e => set('name', e.target.value)} required maxLength={120} placeholder="Microsoft 365 Business"/></label>
+      <label>Seats<input type="number" min={0} value={v.seats ?? 1} onChange={e => set('seats', Number(e.target.value))} required/></label>
+      <label>License key <em className="optional">Optional</em><input value={v.license_key ?? ''} onChange={e => set('license_key', e.target.value)} maxLength={200}/></label>
+      <label>Site <em className="optional">Optional</em><Select value={v.site_id ?? ''} onChange={e => set('site_id', e.target.value || null)}><option value="">None</option>{sites.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}</Select></label>
+      <label>Vendor<input value={v.vendor ?? ''} onChange={e => set('vendor', e.target.value)} maxLength={120} placeholder="Microsoft"/></label>
+      <label>Purchase date<input type="date" value={v.purchase_date ?? ''} onChange={e => set('purchase_date', e.target.value || null)}/></label>
+      <label>Expiration date <em className="optional">Optional</em><input type="date" value={v.expiration_date ?? ''} onChange={e => set('expiration_date', e.target.value || null)}/></label>
+      <label className="span-2">Notes<input value={v.notes ?? ''} onChange={e => set('notes', e.target.value)} maxLength={500}/></label>
+      <div className="modal-actions span-2"><button type="button" className="secondary-action" onClick={onClose} disabled={busy}>Cancel</button><button className="primary-action" disabled={busy || !v.name?.trim() || v.seats == null || v.seats < 0}>{busy ? 'Saving…' : license ? 'Save changes' : 'Add license'}</button></div>
+    </form>
+  </Modal>;
+}
+function LicenseCheckoutModal({ license, members, busy, onSave, onClose }: { license: License; members: OrgMember[]; busy: boolean; onSave: (v: { assigned_user_id?: string | null; assigned_to?: string }) => void; onClose: () => void }) {
+  const [userId, setUserId] = useState(''); const [freeText, setFreeText] = useState('');
+  return <Modal title={`Assign a seat of "${license.name}"`} icon={<UserCheck size={17}/>} onClose={onClose}>
+    <form className="modal-form" onSubmit={e => { e.preventDefault(); onSave({ assigned_user_id: userId || null, assigned_to: freeText }); }}>
+      <label>Assign to (user)<Select value={userId} onChange={e => setUserId(e.target.value)}><option value="">Choose a member</option>{members.map(m => <option key={m.user_id} value={m.user_id}>{m.email}</option>)}</Select></label>
+      <label>Or free text <em className="optional">Optional</em><input value={freeText} onChange={e => setFreeText(e.target.value)} maxLength={120} placeholder="Outside contact, or leave blank"/></label>
+      <div className="modal-actions span-2"><button type="button" className="secondary-action" onClick={onClose} disabled={busy}>Cancel</button><button className="primary-action" disabled={busy || (!userId && !freeText.trim())}>{busy ? 'Assigning…' : 'Assign seat'}</button></div>
     </form>
   </Modal>;
 }
