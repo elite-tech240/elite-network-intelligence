@@ -1190,7 +1190,7 @@ async function handle(req: Request): Promise<Response> {
     if (!assetTag || !name) return fail("Asset tag and name are required");
     const row = {
       organization_id: organizationId, asset_tag: assetTag, name,
-      category: String(body.category || "other"), status: String(body.status || "in_stock"),
+      category: String(body.category || "other"), status: String(body.status || "ready_to_deploy"),
       assigned_to: body.assigned_to ? String(body.assigned_to).trim() : null,
       assigned_user_id: body.assigned_user_id || null,
       device_id: body.device_id || null, site_id: body.site_id || null,

@@ -369,10 +369,17 @@ const ASSET_CATEGORIES = [
   { value: 'printer', label: 'Printer' }, { value: 'network_gear', label: 'Network gear' }, { value: 'mobile', label: 'Mobile' },
   { value: 'server', label: 'Server' }, { value: 'other', label: 'Other' },
 ];
+// Snipe-IT's four fixed status types. "Deployed" is not one of them - it's a computed
+// meta-status (see isCheckedOut below), shown whenever a "Ready to Deploy" asset actually
+// has someone it's checked out to, exactly like Snipe-IT's own asset list.
 const ASSET_STATUSES = [
-  { value: 'in_stock', label: 'In stock' }, { value: 'in_use', label: 'In use' },
-  { value: 'repair', label: 'In repair' }, { value: 'retired', label: 'Retired' },
+  { value: 'ready_to_deploy', label: 'Ready to Deploy' }, { value: 'pending', label: 'Pending' },
+  { value: 'undeployable', label: 'Undeployable' }, { value: 'archived', label: 'Archived' },
 ];
+const isCheckedOut = (a: Pick<Asset, 'status' | 'assigned_user_id' | 'assigned_to'>) =>
+  a.status === 'ready_to_deploy' && Boolean(a.assigned_user_id || a.assigned_to);
+const assetStatusLabel = (a: Pick<Asset, 'status' | 'assigned_user_id' | 'assigned_to'>) =>
+  isCheckedOut(a) ? 'Deployed' : ASSET_STATUSES.find(s => s.value === a.status)?.label ?? a.status;
 type Asset = { id: string; asset_tag: string; name: string; category: string; status: string; assigned_to: string | null; assigned_user_id: string | null; device_id: string | null; site_id: string | null; location: string | null; vendor: string | null; serial_number: string | null; purchase_date: string | null; warranty_expires: string | null; notes: string | null };
 export function AssetsPage({ organizationId, role, token, devices, sites }: { organizationId: string; role: Role; token: string; devices: Dev[]; sites: { id: string; name: string }[] }) {
   const members = useOrgMembers(organizationId, token);
@@ -402,33 +409,44 @@ export function AssetsPage({ organizationId, role, token, devices, sites }: { or
     catch (e) { setErr(e instanceof Error ? e.message : 'Could not delete that asset.'); }
     finally { setBusy(''); }
   };
-  const list = rows.filter(a => filter === 'all' || a.status === filter);
-  const t = useTable(list, (a, k) => k === 'device' ? (devices.find(d => d.id === a.device_id)?.hostname ?? '') : (a as any)[k]);
+  // "Ready to Deploy" tab means truly unassigned-and-available; a deployable asset that's
+  // actually checked out shows under the synthetic "deployed" tab instead (see isCheckedOut).
+  const list = rows.filter(a => filter === 'all' || (filter === 'deployed' ? isCheckedOut(a) : filter === 'ready_to_deploy' ? a.status === 'ready_to_deploy' && !isCheckedOut(a) : a.status === filter));
+  const t = useTable(list, (a, k) => k === 'device' ? (devices.find(d => d.id === a.device_id)?.hostname ?? '') : k === 'status' ? assetStatusLabel(a) : (a as any)[k]);
   const hostname = (id: string | null) => id ? (devices.find(d => d.id === id)?.hostname ?? '—') : '—';
   const memberEmail = (id: string | null) => id ? (members.find(m => m.user_id === id)?.email ?? '—') : null;
   const assigneeLabel = (a: Asset) => memberEmail(a.assigned_user_id) ?? a.assigned_to ?? '—';
   const expiring = (a: Asset) => a.warranty_expires && new Date(a.warranty_expires).getTime() - Date.now() < 30 * 86400000 && new Date(a.warranty_expires).getTime() > Date.now() - 86400000;
-  const assignedCount = rows.filter(a => a.status === 'in_use').length;
-  const inStockCount = rows.filter(a => a.status === 'in_stock').length;
-  const expiringCount = rows.filter(expiring).length;
+  const deployedCount = rows.filter(isCheckedOut).length;
+  const readyCount = rows.filter(a => a.status === 'ready_to_deploy' && !isCheckedOut(a)).length;
+  const pendingCount = rows.filter(a => a.status === 'pending').length;
+  const archivedCount = rows.filter(a => a.status === 'archived').length;
+  const tabs = [
+    { id: 'all', label: `All (${rows.length})` },
+    { id: 'ready_to_deploy', label: `Ready to Deploy (${readyCount})` },
+    { id: 'deployed', label: `Deployed (${deployedCount})` },
+    { id: 'pending', label: `Pending (${pendingCount})` },
+    { id: 'undeployable', label: `Undeployable (${rows.filter(a => a.status === 'undeployable').length})` },
+    { id: 'archived', label: `Archived (${archivedCount})` },
+  ];
   return <div className="sites-workspace">
     <Flash kind="error" msg={err}/>
     <div className="stats-grid">
-      <StatCard icon={<Boxes size={15}/>} tone="blue" label="Total assets" value={rows.length}/>
-      <StatCard icon={<UserCheck size={15}/>} tone="green" label="Assigned / in use" value={assignedCount}/>
-      <StatCard icon={<Archive size={15}/>} tone="purple" label="In stock" value={inStockCount}/>
-      <StatCard icon={<CircleAlert size={15}/>} tone="orange" label="Warranty expiring" value={expiringCount}/>
+      <StatCard icon={<UserCheck size={15}/>} tone="green" label="Deployed" value={deployedCount}/>
+      <StatCard icon={<Boxes size={15}/>} tone="blue" label="Ready to Deploy" value={readyCount}/>
+      <StatCard icon={<Archive size={15}/>} tone="purple" label="Pending" value={pendingCount}/>
+      <StatCard icon={<CircleAlert size={15}/>} tone="orange" label="Archived" value={archivedCount}/>
     </div>
     <section className="panel page-panel"><div className="panel-head"><div><h3>Asset inventory</h3><p>{rows.length} asset{rows.length === 1 ? '' : 's'} · tags, warranty and who has what.</p></div>
       {isOp(role) && <button className="primary-action" onClick={() => setEditing('new')}><Plus size={15}/>Add asset</button>}</div>
-      <div className="filter-bar"><Tabs items={[{ id: 'all', label: `All (${rows.length})` }, ...ASSET_STATUSES.map(s => ({ id: s.value, label: `${s.label} (${rows.filter(a => a.status === s.value).length})` }))]} active={filter} onChange={setFilter}/></div>
+      <div className="filter-bar"><Tabs items={tabs} active={filter} onChange={setFilter}/></div>
       {loading ? <Skeleton rows={3}/> : !t.rows.length ? <EmptyState icon={<Boxes size={22}/>} title="No assets yet" text="Add laptops, monitors, printers and other equipment to keep track of them."/> : <><div className="table-wrap"><table>
-        <thead><tr><Th t={t} k="asset_tag">TAG</Th><Th t={t} k="name">NAME</Th><Th t={t} k="category">CATEGORY</Th><Th t={t} k="status">STATUS</Th><Th t={t} k="assigned_to">ASSIGNED TO</Th><Th t={t} k="warranty_expires">WARRANTY</Th><th>ACTIONS</th></tr></thead>
+        <thead><tr><Th t={t} k="asset_tag">TAG</Th><Th t={t} k="name">NAME</Th><Th t={t} k="category">CATEGORY</Th><Th t={t} k="status">STATUS</Th><Th t={t} k="assigned_to">CHECKED OUT TO</Th><Th t={t} k="warranty_expires">WARRANTY</Th><th>ACTIONS</th></tr></thead>
         <tbody>{t.rows.map(a => <tr key={a.id}>
           <td><code>{a.asset_tag}</code></td>
           <td><b>{a.name}</b>{a.device_id && <div className="muted">linked: {hostname(a.device_id)}</div>}</td>
           <td>{ASSET_CATEGORIES.find(c => c.value === a.category)?.label ?? a.category}</td>
-          <td><span className={`status-pill ${a.status === 'in_use' ? 'online' : a.status === 'retired' ? 'offline' : 'pending'}`}><i/>{ASSET_STATUSES.find(s => s.value === a.status)?.label ?? a.status}</span></td>
+          <td><span className={`status-pill ${isCheckedOut(a) ? 'online' : a.status === 'archived' || a.status === 'undeployable' ? 'offline' : 'pending'}`}><i/>{assetStatusLabel(a)}</span></td>
           <td>{assigneeLabel(a)}</td>
           <td>{a.warranty_expires ? <span className={expiring(a) ? 'txt-warn' : ''}>{new Date(a.warranty_expires).toLocaleDateString()}</span> : '—'}</td>
           <td>{isOp(role) && <div className="row-actions"><button className="mini-icon" title="Edit" disabled={busy === a.id} onClick={() => setEditing(a)}><Pencil size={15}/></button><button className="mini-icon danger" title="Delete" disabled={busy === a.id} onClick={() => remove(a)}><Trash2 size={15}/></button></div>}</td>
@@ -439,16 +457,16 @@ export function AssetsPage({ organizationId, role, token, devices, sites }: { or
   </div>;
 }
 function AssetModal({ asset, devices, sites, members, busy, onSave, onClose }: { asset: Asset | null; devices: Dev[]; sites: { id: string; name: string }[]; members: OrgMember[]; busy: boolean; onSave: (v: Partial<Asset>) => void; onClose: () => void }) {
-  const [v, setV] = useState<Partial<Asset>>(asset ?? { asset_tag: '', name: '', category: 'laptop', status: 'in_stock' });
+  const [v, setV] = useState<Partial<Asset>>(asset ?? { asset_tag: '', name: '', category: 'laptop', status: 'ready_to_deploy' });
   const set = (k: keyof Asset, val: any) => setV(prev => ({ ...prev, [k]: val }));
   return <Modal title={asset ? 'Edit asset' : 'Add asset'} subtitle={asset?.asset_tag} icon={<Boxes size={17}/>} onClose={onClose}>
     <form className="modal-form" onSubmit={e => { e.preventDefault(); onSave(v); }}>
       <label>Asset tag<input value={v.asset_tag ?? ''} onChange={e => set('asset_tag', e.target.value)} required maxLength={60} placeholder="LAP-0042"/></label>
       <label>Name<input value={v.name ?? ''} onChange={e => set('name', e.target.value)} required maxLength={120} placeholder="Dell Latitude 5440"/></label>
       <label>Category<Select value={v.category ?? 'laptop'} onChange={e => set('category', e.target.value)}>{ASSET_CATEGORIES.map(c => <option key={c.value} value={c.value}>{c.label}</option>)}</Select></label>
-      <label>Status<Select value={v.status ?? 'in_stock'} onChange={e => set('status', e.target.value)}>{ASSET_STATUSES.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}</Select></label>
-      <label>Assigned to (user)<Select value={v.assigned_user_id ?? ''} onChange={e => set('assigned_user_id', e.target.value || null)}><option value="">Unassigned</option>{members.map(m => <option key={m.user_id} value={m.user_id}>{m.email}</option>)}</Select></label>
-      <label>Assigned to (free text) <em className="optional">Optional</em><input value={v.assigned_to ?? ''} onChange={e => set('assigned_to', e.target.value)} maxLength={120} placeholder="Outside contact, or leave blank"/></label>
+      <label>Status<Select value={v.status ?? 'ready_to_deploy'} onChange={e => set('status', e.target.value)}>{ASSET_STATUSES.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}</Select><small className="muted">Becomes "Deployed" automatically once checked out to someone below.</small></label>
+      <label>Checked out to (user)<Select value={v.assigned_user_id ?? ''} onChange={e => set('assigned_user_id', e.target.value || null)}><option value="">Unassigned</option>{members.map(m => <option key={m.user_id} value={m.user_id}>{m.email}</option>)}</Select></label>
+      <label>Checked out to (free text) <em className="optional">Optional</em><input value={v.assigned_to ?? ''} onChange={e => set('assigned_to', e.target.value)} maxLength={120} placeholder="Outside contact, or leave blank"/></label>
       <label>Linked device <em className="optional">Optional</em><Select value={v.device_id ?? ''} onChange={e => set('device_id', e.target.value || null)}><option value="">None</option>{devices.map(d => <option key={d.id} value={d.id}>{d.hostname}</option>)}</Select></label>
       <label>Site <em className="optional">Optional</em><Select value={v.site_id ?? ''} onChange={e => set('site_id', e.target.value || null)}><option value="">None</option>{sites.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}</Select></label>
       <label>Location<input value={v.location ?? ''} onChange={e => set('location', e.target.value)} maxLength={120} placeholder="HQ · 2nd floor"/></label>
