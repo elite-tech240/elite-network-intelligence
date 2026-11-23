@@ -2,7 +2,7 @@ import { FormEvent, ReactNode, useCallback, useEffect, useState } from 'react';
 import { supabase, api, fmtBps, fmtUptime, ago, LATEST_AGENT_VERSION, SELF_UPDATE_FROM, versionAtLeast, publishedAgentVersion, type Role } from './lib';
 import { Maximize2, Pencil, Trash2, MessageSquare, Boxes, UserCheck, Archive, CircleAlert, Clock, CheckCircle2 } from 'lucide-react';
 import { LineChart, Sparkline, type Point } from './Chart';
-import { Flash, confirmDialog, Skeleton, Select, toast, LongText, Modal, Drawer, EmptyState, useTable, Th, Pager } from './ui';
+import { Flash, confirmDialog, Skeleton, Select, toast, LongText, Modal, Drawer, EmptyState, useTable, Th, Pager, Counter } from './ui';
 import { Plus } from 'lucide-react';
 
 type Dev = { id: string; hostname: string; agent_version?: string | null };
@@ -22,8 +22,8 @@ function useOrgMembers(organizationId: string, token: string): OrgMember[] {
   }, [organizationId, token]);
   return members;
 }
-const StatCard = ({ icon, tone, label, value }: { icon: ReactNode; tone: 'blue' | 'green' | 'purple' | 'orange'; label: string; value: ReactNode }) =>
-  <div className="stat-card"><div className="stat-top"><span>{label}</span><span className={`stat-icon ${tone}`}>{icon}</span></div><strong>{value}</strong></div>;
+const StatCard = ({ icon, tone, label, value }: { icon: ReactNode; tone: 'blue' | 'green' | 'purple' | 'orange'; label: string; value: number }) =>
+  <div className="stat-card"><div className="stat-top"><span>{label}</span><span className={`stat-icon ${tone}`}>{icon}</span></div><strong><Counter value={value}/></strong></div>;
 const useTick = (fn: () => void, ms: number, deps: unknown[]) => {
   useEffect(() => { fn(); const t = window.setInterval(fn, ms); return () => window.clearInterval(t); }, deps); // eslint-disable-line react-hooks/exhaustive-deps
 };
@@ -420,8 +420,8 @@ export function AssetsPage({ organizationId, role, token, devices, sites }: { or
       <StatCard icon={<CircleAlert size={15}/>} tone="orange" label="Warranty expiring" value={expiringCount}/>
     </div>
     <section className="panel page-panel"><div className="panel-head"><div><h3>Asset inventory</h3><p>{rows.length} asset{rows.length === 1 ? '' : 's'} · tags, warranty and who has what.</p></div>
-      <div className="row-actions"><Select className="filter-select" value={filter} onChange={e => setFilter(e.target.value)}><option value="all">All statuses</option>{ASSET_STATUSES.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}</Select>
-      {isOp(role) && <button className="primary-action" onClick={() => setEditing('new')}><Plus size={15}/>Add asset</button>}</div></div>
+      {isOp(role) && <button className="primary-action" onClick={() => setEditing('new')}><Plus size={15}/>Add asset</button>}</div>
+      <div className="filter-bar"><Tabs items={[{ id: 'all', label: `All (${rows.length})` }, ...ASSET_STATUSES.map(s => ({ id: s.value, label: `${s.label} (${rows.filter(a => a.status === s.value).length})` }))]} active={filter} onChange={setFilter}/></div>
       {loading ? <Skeleton rows={3}/> : !t.rows.length ? <EmptyState icon={<Boxes size={22}/>} title="No assets yet" text="Add laptops, monitors, printers and other equipment to keep track of them."/> : <><div className="table-wrap"><table>
         <thead><tr><Th t={t} k="asset_tag">TAG</Th><Th t={t} k="name">NAME</Th><Th t={t} k="category">CATEGORY</Th><Th t={t} k="status">STATUS</Th><Th t={t} k="assigned_to">ASSIGNED TO</Th><Th t={t} k="warranty_expires">WARRANTY</Th><th>ACTIONS</th></tr></thead>
         <tbody>{t.rows.map(a => <tr key={a.id}>
@@ -511,8 +511,8 @@ export function TicketsPage({ organizationId, token, devices }: { organizationId
       <StatCard icon={<CircleAlert size={15}/>} tone="purple" label="Unassigned (open)" value={unassignedCount}/>
     </div>
     <section className="panel page-panel"><div className="panel-head"><div><h3>Tickets</h3><p>{rows.filter(r => r.status === 'open').length} open · {rows.length} total</p></div>
-      <div className="row-actions"><Select className="filter-select" value={filter} onChange={e => setFilter(e.target.value)}><option value="all">All</option>{TICKET_STATUSES.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}</Select>
-      <button className="primary-action" onClick={() => setCreating(true)}><Plus size={15}/>New ticket</button></div></div>
+      <button className="primary-action" onClick={() => setCreating(true)}><Plus size={15}/>New ticket</button></div>
+      <div className="filter-bar"><Tabs items={[{ id: 'all', label: `All (${rows.length})` }, ...TICKET_STATUSES.map(s => ({ id: s.value, label: `${s.label} (${rows.filter(r => r.status === s.value).length})` }))]} active={filter} onChange={setFilter}/></div>
       {loading ? <Skeleton rows={3}/> : !t.rows.length ? <EmptyState icon={<MessageSquare size={22}/>} title="No tickets" text="Nothing matches this filter."/> : <><div className="table-wrap"><table>
         <thead><tr><th>#</th><Th t={t} k="title">TITLE</Th><Th t={t} k="priority">PRIORITY</Th><Th t={t} k="status">STATUS</Th><th>ASSIGNED TO</th><th>DEVICE</th><Th t={t} k="updated_at">UPDATED</Th></tr></thead>
         <tbody>{t.rows.map(r => <tr key={r.id} className="row-click" onClick={() => setOpenId(r.id)}>
