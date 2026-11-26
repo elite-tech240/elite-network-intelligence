@@ -242,7 +242,7 @@ export default function App() {
         {!membership ? <div className="panel access-panel"><div className="empty-icon"><LockKeyhole size={23}/></div><h2>No workspace access yet</h2><p>Your account is signed in, but it has not been added to an organization. Ask the system owner to assign your account.</p></div> : <>
           <Flash kind="error" msg={dataError ? 'Could not load workspace data: ' + dataError : ''}/>
           {dataLoading && <Skeleton rows={3}/>}
-          {page === 'Overview' && <LiveOverview devices={nonEsxiDevices} hosts={devices.filter(d => d.device_type === 'esxi_host')} vms={devices.filter(d => d.device_type === 'esxi_vm')} sites={sites} networks={networks} loading={dataLoading} go={go} organizationId={membership.organization_id} prefs={prefs} setPrefs={setPrefs}/>}
+          {page === 'Overview' && <LiveOverview devices={nonEsxiDevices} hosts={devices.filter(d => d.device_type === 'esxi_host')} sites={sites} networks={networks} loading={dataLoading} go={go} organizationId={membership.organization_id} prefs={prefs} setPrefs={setPrefs}/>}
           {page === 'Devices' && <DevicesPage devices={nonEsxiDevices} archivedDevices={archivedDevices} loading={dataLoading} organizationId={membership.organization_id} role={membership.role} accessToken={session.access_token} onRefresh={refresh} sites={sites}/>}
           {page === 'Topology' && <TopologyPage sites={sites} networks={networks} devices={devices}/>}
           {page === 'Virtualization' && <VirtualizationPage devices={devices} sites={sites} organizationId={membership.organization_id} accessToken={session.access_token} role={membership.role}/>}
