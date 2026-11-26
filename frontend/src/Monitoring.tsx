@@ -435,14 +435,166 @@ type Asset = { id: string; asset_tag: string; name: string; category: string; st
 export function AssetsPage(props: { organizationId: string; role: Role; token: string; devices: Dev[]; sites: { id: string; name: string }[] }) {
   const [module, setModule] = useState('assets');
   return <div className="sites-workspace">
-    <div className="filter-bar"><Tabs items={[{ id: 'assets', label: 'Assets' }, { id: 'accessories', label: 'Accessories' }, { id: 'consumables', label: 'Consumables' }, { id: 'licenses', label: 'Licenses' }, { id: 'components', label: 'Components' }, { id: 'kits', label: 'Kits' }]} active={module} onChange={setModule}/></div>
+    <div className="filter-bar"><Tabs items={[{ id: 'assets', label: 'Assets' }, { id: 'accessories', label: 'Accessories' }, { id: 'consumables', label: 'Consumables' }, { id: 'licenses', label: 'Licenses' }, { id: 'components', label: 'Components' }, { id: 'kits', label: 'Kits' }, { id: 'locations', label: 'Locations' }, { id: 'companies', label: 'Companies' }, { id: 'manufacturers', label: 'Manufacturers' }, { id: 'models', label: 'Models' }]} active={module} onChange={setModule}/></div>
     {module === 'assets' && <AssetsInventoryPage {...props}/>}
     {module === 'accessories' && <AccessoriesPage organizationId={props.organizationId} role={props.role} token={props.token} sites={props.sites}/>}
     {module === 'consumables' && <ConsumablesPage organizationId={props.organizationId} role={props.role} token={props.token} sites={props.sites}/>}
     {module === 'licenses' && <LicensesPage organizationId={props.organizationId} role={props.role} token={props.token} sites={props.sites}/>}
     {module === 'components' && <ComponentsPage organizationId={props.organizationId} role={props.role} token={props.token} sites={props.sites}/>}
     {module === 'kits' && <KitsPage organizationId={props.organizationId} role={props.role} token={props.token} sites={props.sites}/>}
+    {module === 'locations' && <LocationsPage organizationId={props.organizationId} role={props.role} token={props.token}/>}
+    {module === 'companies' && <CompaniesPage organizationId={props.organizationId} role={props.role} token={props.token}/>}
+    {module === 'manufacturers' && <ManufacturersPage organizationId={props.organizationId} role={props.role} token={props.token}/>}
+    {module === 'models' && <ModelsPage organizationId={props.organizationId} role={props.role} token={props.token}/>}
   </div>;
+}
+type Location = { id: string; name: string; address: string | null };
+type Company = { id: string; name: string };
+type Manufacturer = { id: string; name: string; support_url: string | null };
+type AssetModel = { id: string; name: string; manufacturer_id: string | null; model_number: string | null };
+// ---- Locations: where an asset physically sits (Snipe-IT-style lookup table) ------------------
+function LocationsPage({ organizationId, role, token }: { organizationId: string; role: Role; token: string }) {
+  const [rows, setRows] = useState<Location[]>([]); const [loading, setLoading] = useState(true); const [err, setErr] = useState('');
+  const [name, setName] = useState(''); const [address, setAddress] = useState(''); const [busy, setBusy] = useState(false);
+  const load = useCallback(async () => {
+    setLoading(true); setErr('');
+    try { const r = await api<{ locations: Location[] }>(`/locations?organization_id=${organizationId}`, token); setRows(r.locations); }
+    catch (e) { setErr(e instanceof Error ? e.message : 'Could not load locations.'); }
+    finally { setLoading(false); }
+  }, [organizationId, token]);
+  useEffect(() => { void load(); }, [load]);
+  const add = async (e: FormEvent) => {
+    e.preventDefault(); if (!name.trim()) return; setBusy(true); setErr('');
+    try { await api('/locations', token, { method: 'POST', body: { organization_id: organizationId, name: name.trim(), address: address.trim() || undefined } }); setName(''); setAddress(''); toast('Location added'); await load(); }
+    catch (e) { setErr(e instanceof Error ? e.message : 'Could not add that location.'); }
+    finally { setBusy(false); }
+  };
+  const remove = async (l: Location) => {
+    if (!await confirmDialog(`Delete the "${l.name}" location?`, { confirmText: 'Delete', danger: true })) return;
+    try { await api(`/locations/${l.id}?organization_id=${organizationId}`, token, { method: 'DELETE' }); toast('Location deleted'); await load(); }
+    catch (e) { setErr(e instanceof Error ? e.message : 'Could not delete that location.'); }
+  };
+  return <section className="panel page-panel">
+    <div className="panel-head"><div><h3>Locations</h3><p>Where an asset physically sits, Snipe-IT-style.</p></div></div>
+    <Flash kind="error" msg={err}/>
+    {isOp(role) && <form className="modal-form" style={{ gridTemplateColumns: '1fr 1fr auto', marginBottom: 16 }} onSubmit={add}>
+      <input value={name} onChange={e => setName(e.target.value)} placeholder="e.g. HQ - 3rd floor" maxLength={120}/>
+      <input value={address} onChange={e => setAddress(e.target.value)} placeholder="Address (optional)" maxLength={200}/>
+      <button className="primary-action" disabled={busy || !name.trim()}><Plus size={15}/>Add</button>
+    </form>}
+    {loading ? <Skeleton rows={3}/> : !rows.length ? <EmptyState icon={<Boxes size={22}/>} title="No locations yet" text="Add one to start tracking where assets sit."/> : <div className="table-wrap"><table><thead><tr><th>NAME</th><th>ADDRESS</th>{isOp(role) && <th>ACTIONS</th>}</tr></thead><tbody>
+      {rows.map(l => <tr key={l.id}><td><b>{l.name}</b></td><td className="muted">{l.address ?? '—'}</td>{isOp(role) && <td><button className="icon-only danger" aria-label={`Delete ${l.name}`} title="Delete location" onClick={() => remove(l)}><Trash2 size={15}/></button></td>}</tr>)}
+    </tbody></table></div>}
+  </section>;
+}
+// ---- Companies: the business entity an asset belongs to (Snipe-IT-style lookup table) ---------
+function CompaniesPage({ organizationId, role, token }: { organizationId: string; role: Role; token: string }) {
+  const [rows, setRows] = useState<Company[]>([]); const [loading, setLoading] = useState(true); const [err, setErr] = useState(''); const [name, setName] = useState(''); const [busy, setBusy] = useState(false);
+  const load = useCallback(async () => {
+    setLoading(true); setErr('');
+    try { const r = await api<{ companies: Company[] }>(`/companies?organization_id=${organizationId}`, token); setRows(r.companies); }
+    catch (e) { setErr(e instanceof Error ? e.message : 'Could not load companies.'); }
+    finally { setLoading(false); }
+  }, [organizationId, token]);
+  useEffect(() => { void load(); }, [load]);
+  const add = async (e: FormEvent) => {
+    e.preventDefault(); if (!name.trim()) return; setBusy(true); setErr('');
+    try { await api('/companies', token, { method: 'POST', body: { organization_id: organizationId, name: name.trim() } }); setName(''); toast('Company added'); await load(); }
+    catch (e) { setErr(e instanceof Error ? e.message : 'Could not add that company.'); }
+    finally { setBusy(false); }
+  };
+  const remove = async (c: Company) => {
+    if (!await confirmDialog(`Delete the "${c.name}" company?`, { confirmText: 'Delete', danger: true })) return;
+    try { await api(`/companies/${c.id}?organization_id=${organizationId}`, token, { method: 'DELETE' }); toast('Company deleted'); await load(); }
+    catch (e) { setErr(e instanceof Error ? e.message : 'Could not delete that company.'); }
+  };
+  return <section className="panel page-panel">
+    <div className="panel-head"><div><h3>Companies</h3><p>The business entity an asset belongs to, Snipe-IT-style.</p></div></div>
+    <Flash kind="error" msg={err}/>
+    {isOp(role) && <form className="modal-form" style={{ gridTemplateColumns: '1fr auto', marginBottom: 16 }} onSubmit={add}>
+      <input value={name} onChange={e => setName(e.target.value)} placeholder="e.g. Emirates Auction LLC" maxLength={120}/>
+      <button className="primary-action" disabled={busy || !name.trim()}><Plus size={15}/>Add</button>
+    </form>}
+    {loading ? <Skeleton rows={3}/> : !rows.length ? <EmptyState icon={<Boxes size={22}/>} title="No companies yet" text="Add one to start grouping assets by owner entity."/> : <div className="table-wrap"><table><thead><tr><th>NAME</th>{isOp(role) && <th>ACTIONS</th>}</tr></thead><tbody>
+      {rows.map(c => <tr key={c.id}><td><b>{c.name}</b></td>{isOp(role) && <td><button className="icon-only danger" aria-label={`Delete ${c.name}`} title="Delete company" onClick={() => remove(c)}><Trash2 size={15}/></button></td>}</tr>)}
+    </tbody></table></div>}
+  </section>;
+}
+// ---- Manufacturers: who made the asset (Snipe-IT-style lookup table) --------------------------
+function ManufacturersPage({ organizationId, role, token }: { organizationId: string; role: Role; token: string }) {
+  const [rows, setRows] = useState<Manufacturer[]>([]); const [loading, setLoading] = useState(true); const [err, setErr] = useState('');
+  const [name, setName] = useState(''); const [supportUrl, setSupportUrl] = useState(''); const [busy, setBusy] = useState(false);
+  const load = useCallback(async () => {
+    setLoading(true); setErr('');
+    try { const r = await api<{ manufacturers: Manufacturer[] }>(`/manufacturers?organization_id=${organizationId}`, token); setRows(r.manufacturers); }
+    catch (e) { setErr(e instanceof Error ? e.message : 'Could not load manufacturers.'); }
+    finally { setLoading(false); }
+  }, [organizationId, token]);
+  useEffect(() => { void load(); }, [load]);
+  const add = async (e: FormEvent) => {
+    e.preventDefault(); if (!name.trim()) return; setBusy(true); setErr('');
+    try { await api('/manufacturers', token, { method: 'POST', body: { organization_id: organizationId, name: name.trim(), support_url: supportUrl.trim() || undefined } }); setName(''); setSupportUrl(''); toast('Manufacturer added'); await load(); }
+    catch (e) { setErr(e instanceof Error ? e.message : 'Could not add that manufacturer.'); }
+    finally { setBusy(false); }
+  };
+  const remove = async (m: Manufacturer) => {
+    if (!await confirmDialog(`Delete the "${m.name}" manufacturer? Models that reference it become unassigned.`, { confirmText: 'Delete', danger: true })) return;
+    try { await api(`/manufacturers/${m.id}?organization_id=${organizationId}`, token, { method: 'DELETE' }); toast('Manufacturer deleted'); await load(); }
+    catch (e) { setErr(e instanceof Error ? e.message : 'Could not delete that manufacturer.'); }
+  };
+  return <section className="panel page-panel">
+    <div className="panel-head"><div><h3>Manufacturers</h3><p>Who made the asset, Snipe-IT-style.</p></div></div>
+    <Flash kind="error" msg={err}/>
+    {isOp(role) && <form className="modal-form" style={{ gridTemplateColumns: '1fr 1fr auto', marginBottom: 16 }} onSubmit={add}>
+      <input value={name} onChange={e => setName(e.target.value)} placeholder="e.g. Dell, HP, Apple" maxLength={120}/>
+      <input value={supportUrl} onChange={e => setSupportUrl(e.target.value)} placeholder="Support URL (optional)" maxLength={300}/>
+      <button className="primary-action" disabled={busy || !name.trim()}><Plus size={15}/>Add</button>
+    </form>}
+    {loading ? <Skeleton rows={3}/> : !rows.length ? <EmptyState icon={<Boxes size={22}/>} title="No manufacturers yet" text="Add one to start tagging models by manufacturer."/> : <div className="table-wrap"><table><thead><tr><th>NAME</th><th>SUPPORT URL</th>{isOp(role) && <th>ACTIONS</th>}</tr></thead><tbody>
+      {rows.map(m => <tr key={m.id}><td><b>{m.name}</b></td><td className="muted">{m.support_url ?? '—'}</td>{isOp(role) && <td><button className="icon-only danger" aria-label={`Delete ${m.name}`} title="Delete manufacturer" onClick={() => remove(m)}><Trash2 size={15}/></button></td>}</tr>)}
+    </tbody></table></div>}
+  </section>;
+}
+// ---- Models: a manufacturer + model number combo (Snipe-IT-style lookup table) ----------------
+function ModelsPage({ organizationId, role, token }: { organizationId: string; role: Role; token: string }) {
+  const [rows, setRows] = useState<AssetModel[]>([]); const [manufacturers, setManufacturers] = useState<Manufacturer[]>([]); const [loading, setLoading] = useState(true); const [err, setErr] = useState('');
+  const [name, setName] = useState(''); const [manufacturerId, setManufacturerId] = useState(''); const [modelNumber, setModelNumber] = useState(''); const [busy, setBusy] = useState(false);
+  const load = useCallback(async () => {
+    setLoading(true); setErr('');
+    try {
+      const [r, m] = await Promise.all([
+        api<{ models: AssetModel[] }>(`/models?organization_id=${organizationId}`, token),
+        api<{ manufacturers: Manufacturer[] }>(`/manufacturers?organization_id=${organizationId}`, token),
+      ]);
+      setRows(r.models); setManufacturers(m.manufacturers);
+    } catch (e) { setErr(e instanceof Error ? e.message : 'Could not load models.'); }
+    finally { setLoading(false); }
+  }, [organizationId, token]);
+  useEffect(() => { void load(); }, [load]);
+  const add = async (e: FormEvent) => {
+    e.preventDefault(); if (!name.trim()) return; setBusy(true); setErr('');
+    try { await api('/models', token, { method: 'POST', body: { organization_id: organizationId, name: name.trim(), manufacturer_id: manufacturerId || undefined, model_number: modelNumber.trim() || undefined } }); setName(''); setManufacturerId(''); setModelNumber(''); toast('Model added'); await load(); }
+    catch (e) { setErr(e instanceof Error ? e.message : 'Could not add that model.'); }
+    finally { setBusy(false); }
+  };
+  const remove = async (m: AssetModel) => {
+    if (!await confirmDialog(`Delete the "${m.name}" model?`, { confirmText: 'Delete', danger: true })) return;
+    try { await api(`/models/${m.id}?organization_id=${organizationId}`, token, { method: 'DELETE' }); toast('Model deleted'); await load(); }
+    catch (e) { setErr(e instanceof Error ? e.message : 'Could not delete that model.'); }
+  };
+  return <section className="panel page-panel">
+    <div className="panel-head"><div><h3>Models</h3><p>A manufacturer + model number combo, Snipe-IT-style.</p></div></div>
+    <Flash kind="error" msg={err}/>
+    {isOp(role) && <form className="modal-form" style={{ gridTemplateColumns: '1fr 1fr 1fr auto', marginBottom: 16 }} onSubmit={add}>
+      <input value={name} onChange={e => setName(e.target.value)} placeholder="e.g. Latitude 5420" maxLength={120}/>
+      <Select value={manufacturerId} onChange={e => setManufacturerId(e.target.value)}><option value="">Manufacturer (optional)</option>{manufacturers.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}</Select>
+      <input value={modelNumber} onChange={e => setModelNumber(e.target.value)} placeholder="Model number (optional)" maxLength={120}/>
+      <button className="primary-action" disabled={busy || !name.trim()}><Plus size={15}/>Add</button>
+    </form>}
+    {loading ? <Skeleton rows={3}/> : !rows.length ? <EmptyState icon={<Boxes size={22}/>} title="No models yet" text="Add one to start tagging assets by model."/> : <div className="table-wrap"><table><thead><tr><th>NAME</th><th>MANUFACTURER</th><th>MODEL NUMBER</th>{isOp(role) && <th>ACTIONS</th>}</tr></thead><tbody>
+      {rows.map(m => <tr key={m.id}><td><b>{m.name}</b></td><td className="muted">{manufacturers.find(x => x.id === m.manufacturer_id)?.name ?? '—'}</td><td className="muted">{m.model_number ?? '—'}</td>{isOp(role) && <td><button className="icon-only danger" aria-label={`Delete ${m.name}`} title="Delete model" onClick={() => remove(m)}><Trash2 size={15}/></button></td>}</tr>)}
+    </tbody></table></div>}
+  </section>;
 }
 function AssetsInventoryPage({ organizationId, role, token, devices, sites }: { organizationId: string; role: Role; token: string; devices: Dev[]; sites: { id: string; name: string }[] }) {
   const members = useOrgMembers(organizationId, token);

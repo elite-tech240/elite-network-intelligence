@@ -1734,6 +1734,196 @@ async function handle(req: Request): Promise<Response> {
     return json({ ok: true, checkout: logRow }, 201);
   }
 
+  // ---- Locations / Companies / Manufacturers / Models (asset reference data) ------------------
+  if (req.method === "GET" && path === "/locations") {
+    const organizationId = url.searchParams.get("organization_id") || "";
+    await requirePermission(req, organizationId, "assets", "view");
+    const { data, error } = await admin.from("locations").select("*").eq("organization_id", organizationId).order("name");
+    if (error) return fail("Could not load locations", 500);
+    return json({ locations: data || [] });
+  }
+  if (req.method === "POST" && path === "/locations") {
+    const body = await readJson(req);
+    const organizationId = String(body.organization_id || "");
+    const { user } = await requirePermission(req, organizationId, "assets", "create");
+    const name = String(body.name || "").trim();
+    if (!name) return fail("Name is required");
+    const { data, error } = await admin.from("locations").insert({ organization_id: organizationId, name, address: body.address ? String(body.address).trim() : null }).select("*").single();
+    if (error) return fail("Could not create that location", 500);
+    await audit(organizationId, "user", user.id, "create_location", "location", data.id, { name });
+    return json({ ok: true, location: data }, 201);
+  }
+  const locationIdMatch = path.match(new RegExp(`^/locations/${uuidPart}$`, "i"));
+  if (req.method === "PUT" && locationIdMatch) {
+    const locationId = locationIdMatch[1];
+    const body = await readJson(req);
+    const organizationId = String(body.organization_id || "");
+    const { user } = await requirePermission(req, organizationId, "assets", "edit");
+    const { data: existing } = await admin.from("locations").select("id").eq("id", locationId).eq("organization_id", organizationId).maybeSingle();
+    if (!existing) return fail("Location not found in this workspace", 404);
+    const patch: Record<string, unknown> = {};
+    for (const k of ["name", "address"]) {
+      if (body[k] !== undefined) patch[k] = typeof body[k] === "string" ? (body[k].trim() || null) : body[k];
+    }
+    const { data, error } = await admin.from("locations").update(patch).eq("id", locationId).select("*").single();
+    if (error) return fail("Could not update that location", 500);
+    await audit(organizationId, "user", user.id, "update_location", "location", locationId, {});
+    return json({ ok: true, location: data });
+  }
+  if (req.method === "DELETE" && locationIdMatch) {
+    const locationId = locationIdMatch[1];
+    const organizationId = url.searchParams.get("organization_id") || "";
+    const { user } = await requirePermission(req, organizationId, "assets", "delete");
+    const { data: existing } = await admin.from("locations").select("id").eq("id", locationId).eq("organization_id", organizationId).maybeSingle();
+    if (!existing) return fail("Location not found in this workspace", 404);
+    const { error } = await admin.from("locations").delete().eq("id", locationId);
+    if (error) return fail("Could not delete that location", 500);
+    await audit(organizationId, "user", user.id, "delete_location", "location", locationId, {});
+    return json({ ok: true, location_id: locationId });
+  }
+
+  if (req.method === "GET" && path === "/companies") {
+    const organizationId = url.searchParams.get("organization_id") || "";
+    await requirePermission(req, organizationId, "assets", "view");
+    const { data, error } = await admin.from("companies").select("*").eq("organization_id", organizationId).order("name");
+    if (error) return fail("Could not load companies", 500);
+    return json({ companies: data || [] });
+  }
+  if (req.method === "POST" && path === "/companies") {
+    const body = await readJson(req);
+    const organizationId = String(body.organization_id || "");
+    const { user } = await requirePermission(req, organizationId, "assets", "create");
+    const name = String(body.name || "").trim();
+    if (!name) return fail("Name is required");
+    const { data, error } = await admin.from("companies").insert({ organization_id: organizationId, name }).select("*").single();
+    if (error) return fail("Could not create that company", 500);
+    await audit(organizationId, "user", user.id, "create_company", "company", data.id, { name });
+    return json({ ok: true, company: data }, 201);
+  }
+  const companyIdMatch = path.match(new RegExp(`^/companies/${uuidPart}$`, "i"));
+  if (req.method === "PUT" && companyIdMatch) {
+    const companyId = companyIdMatch[1];
+    const body = await readJson(req);
+    const organizationId = String(body.organization_id || "");
+    const { user } = await requirePermission(req, organizationId, "assets", "edit");
+    const { data: existing } = await admin.from("companies").select("id").eq("id", companyId).eq("organization_id", organizationId).maybeSingle();
+    if (!existing) return fail("Company not found in this workspace", 404);
+    const patch: Record<string, unknown> = {};
+    if (body.name !== undefined) patch.name = String(body.name).trim();
+    const { data, error } = await admin.from("companies").update(patch).eq("id", companyId).select("*").single();
+    if (error) return fail("Could not update that company", 500);
+    await audit(organizationId, "user", user.id, "update_company", "company", companyId, {});
+    return json({ ok: true, company: data });
+  }
+  if (req.method === "DELETE" && companyIdMatch) {
+    const companyId = companyIdMatch[1];
+    const organizationId = url.searchParams.get("organization_id") || "";
+    const { user } = await requirePermission(req, organizationId, "assets", "delete");
+    const { data: existing } = await admin.from("companies").select("id").eq("id", companyId).eq("organization_id", organizationId).maybeSingle();
+    if (!existing) return fail("Company not found in this workspace", 404);
+    const { error } = await admin.from("companies").delete().eq("id", companyId);
+    if (error) return fail("Could not delete that company", 500);
+    await audit(organizationId, "user", user.id, "delete_company", "company", companyId, {});
+    return json({ ok: true, company_id: companyId });
+  }
+
+  if (req.method === "GET" && path === "/manufacturers") {
+    const organizationId = url.searchParams.get("organization_id") || "";
+    await requirePermission(req, organizationId, "assets", "view");
+    const { data, error } = await admin.from("manufacturers").select("*").eq("organization_id", organizationId).order("name");
+    if (error) return fail("Could not load manufacturers", 500);
+    return json({ manufacturers: data || [] });
+  }
+  if (req.method === "POST" && path === "/manufacturers") {
+    const body = await readJson(req);
+    const organizationId = String(body.organization_id || "");
+    const { user } = await requirePermission(req, organizationId, "assets", "create");
+    const name = String(body.name || "").trim();
+    if (!name) return fail("Name is required");
+    const { data, error } = await admin.from("manufacturers").insert({ organization_id: organizationId, name, support_url: body.support_url ? String(body.support_url).trim() : null }).select("*").single();
+    if (error) return fail("Could not create that manufacturer", 500);
+    await audit(organizationId, "user", user.id, "create_manufacturer", "manufacturer", data.id, { name });
+    return json({ ok: true, manufacturer: data }, 201);
+  }
+  const manufacturerIdMatch = path.match(new RegExp(`^/manufacturers/${uuidPart}$`, "i"));
+  if (req.method === "PUT" && manufacturerIdMatch) {
+    const manufacturerId = manufacturerIdMatch[1];
+    const body = await readJson(req);
+    const organizationId = String(body.organization_id || "");
+    const { user } = await requirePermission(req, organizationId, "assets", "edit");
+    const { data: existing } = await admin.from("manufacturers").select("id").eq("id", manufacturerId).eq("organization_id", organizationId).maybeSingle();
+    if (!existing) return fail("Manufacturer not found in this workspace", 404);
+    const patch: Record<string, unknown> = {};
+    for (const k of ["name", "support_url"]) {
+      if (body[k] !== undefined) patch[k] = typeof body[k] === "string" ? (body[k].trim() || null) : body[k];
+    }
+    const { data, error } = await admin.from("manufacturers").update(patch).eq("id", manufacturerId).select("*").single();
+    if (error) return fail("Could not update that manufacturer", 500);
+    await audit(organizationId, "user", user.id, "update_manufacturer", "manufacturer", manufacturerId, {});
+    return json({ ok: true, manufacturer: data });
+  }
+  if (req.method === "DELETE" && manufacturerIdMatch) {
+    const manufacturerId = manufacturerIdMatch[1];
+    const organizationId = url.searchParams.get("organization_id") || "";
+    const { user } = await requirePermission(req, organizationId, "assets", "delete");
+    const { data: existing } = await admin.from("manufacturers").select("id").eq("id", manufacturerId).eq("organization_id", organizationId).maybeSingle();
+    if (!existing) return fail("Manufacturer not found in this workspace", 404);
+    const { error } = await admin.from("manufacturers").delete().eq("id", manufacturerId);
+    if (error) return fail("Could not delete that manufacturer", 500);
+    await audit(organizationId, "user", user.id, "delete_manufacturer", "manufacturer", manufacturerId, {});
+    return json({ ok: true, manufacturer_id: manufacturerId });
+  }
+
+  if (req.method === "GET" && path === "/models") {
+    const organizationId = url.searchParams.get("organization_id") || "";
+    await requirePermission(req, organizationId, "assets", "view");
+    const { data, error } = await admin.from("models").select("*").eq("organization_id", organizationId).order("name");
+    if (error) return fail("Could not load models", 500);
+    return json({ models: data || [] });
+  }
+  if (req.method === "POST" && path === "/models") {
+    const body = await readJson(req);
+    const organizationId = String(body.organization_id || "");
+    const { user } = await requirePermission(req, organizationId, "assets", "create");
+    const name = String(body.name || "").trim();
+    if (!name) return fail("Name is required");
+    const { data, error } = await admin.from("models").insert({
+      organization_id: organizationId, name, manufacturer_id: body.manufacturer_id || null, model_number: body.model_number ? String(body.model_number).trim() : null,
+    }).select("*").single();
+    if (error) return fail("Could not create that model", 500);
+    await audit(organizationId, "user", user.id, "create_model", "model", data.id, { name });
+    return json({ ok: true, model: data }, 201);
+  }
+  const modelIdMatch = path.match(new RegExp(`^/models/${uuidPart}$`, "i"));
+  if (req.method === "PUT" && modelIdMatch) {
+    const modelId = modelIdMatch[1];
+    const body = await readJson(req);
+    const organizationId = String(body.organization_id || "");
+    const { user } = await requirePermission(req, organizationId, "assets", "edit");
+    const { data: existing } = await admin.from("models").select("id").eq("id", modelId).eq("organization_id", organizationId).maybeSingle();
+    if (!existing) return fail("Model not found in this workspace", 404);
+    const patch: Record<string, unknown> = {};
+    for (const k of ["name", "model_number"]) {
+      if (body[k] !== undefined) patch[k] = typeof body[k] === "string" ? (body[k].trim() || null) : body[k];
+    }
+    if (body.manufacturer_id !== undefined) patch.manufacturer_id = body.manufacturer_id || null;
+    const { data, error } = await admin.from("models").update(patch).eq("id", modelId).select("*").single();
+    if (error) return fail("Could not update that model", 500);
+    await audit(organizationId, "user", user.id, "update_model", "model", modelId, {});
+    return json({ ok: true, model: data });
+  }
+  if (req.method === "DELETE" && modelIdMatch) {
+    const modelId = modelIdMatch[1];
+    const organizationId = url.searchParams.get("organization_id") || "";
+    const { user } = await requirePermission(req, organizationId, "assets", "delete");
+    const { data: existing } = await admin.from("models").select("id").eq("id", modelId).eq("organization_id", organizationId).maybeSingle();
+    if (!existing) return fail("Model not found in this workspace", 404);
+    const { error } = await admin.from("models").delete().eq("id", modelId);
+    if (error) return fail("Could not delete that model", 500);
+    await audit(organizationId, "user", user.id, "delete_model", "model", modelId, {});
+    return json({ ok: true, model_id: modelId });
+  }
+
   // ---- Ticket categories (GLPI-style triage categories) ---------------------------------------
   if (req.method === "GET" && path === "/ticket-categories") {
     const organizationId = url.searchParams.get("organization_id") || "";
