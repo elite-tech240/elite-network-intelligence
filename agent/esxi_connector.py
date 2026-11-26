@@ -107,6 +107,18 @@ def connect_esxi():
         context = ssl.create_default_context(cafile=ca_file)
     else:
         context = ssl._create_unverified_context()
+    # ESXi 6.0's hostd speaks an old TLS/SSL stack that relies on legacy
+    # renegotiation and weaker ciphers. OpenSSL 3.x (bundled with Python 3.10+
+    # on recent Windows/Linux builds) disables both by default, which makes
+    # the handshake die mid-stream with "UNEXPECTED_EOF_WHILE_READING" even
+    # though the credentials and host are correct. Relax the context so
+    # older hosts like this one can still complete the handshake.
+    try:
+        context.set_ciphers("DEFAULT:@SECLEVEL=0")
+    except ssl.SSLError:
+        pass
+    legacy_renegotiation = getattr(ssl, "OP_LEGACY_SERVER_CONNECT", 0x4)  # OpenSSL SSL_OP_LEGACY_SERVER_CONNECT
+    context.options |= legacy_renegotiation
     return SmartConnect(host=host, user=user, pwd=password, port=443, sslContext=context)
 
 
