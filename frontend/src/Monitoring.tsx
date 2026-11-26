@@ -145,6 +145,48 @@ export function ReportsPage({ organizationId, token }: { organizationId: string;
 }
 
 /* ----------------------------------------------------------------- Audit */
+// User history (Snipe-IT "view user" style): everything currently or previously checked out to
+// one person across assets/accessories/consumables/licenses/kits, plus their own audit trail,
+// merged into one chronological timeline.
+type UserHistoryRow = { id: string; when: string; kind: string; what: string; note: string };
+export function UserHistoryModal({ organizationId, email, userId, onClose }: { organizationId: string; email: string; userId: string; onClose: () => void }) {
+  const [rows, setRows] = useState<UserHistoryRow[] | null>(null);
+  useEffect(() => {
+    let active = true;
+    (async () => {
+      if (!supabase) return;
+      const [assets, acc, cons, lic, kits, audit] = await Promise.all([
+        supabase.from('assets').select('id,asset_tag,name,status,updated_at').eq('organization_id', organizationId).eq('assigned_user_id', userId),
+        supabase.from('accessory_checkouts').select('id,checked_out_at,checked_in_at,accessories(name)').eq('organization_id', organizationId).eq('assigned_user_id', userId),
+        supabase.from('consumable_uses').select('id,qty,used_at,consumables(name)').eq('organization_id', organizationId).eq('assigned_user_id', userId),
+        supabase.from('license_seats').select('id,checked_out_at,checked_in_at,licenses(name)').eq('organization_id', organizationId).eq('assigned_user_id', userId),
+        supabase.from('kit_checkouts').select('id,checked_out_at,kits(name)').eq('organization_id', organizationId).eq('assigned_user_id', userId),
+        supabase.from('audit_logs').select('id,action,resource_type,details,occurred_at').eq('organization_id', organizationId).eq('actor_user_id', userId).order('occurred_at', { ascending: false }).limit(50),
+      ]);
+      if (!active) return;
+      const out: UserHistoryRow[] = [];
+      (assets.data ?? []).forEach((a: any) => out.push({ id: 'asset-' + a.id, when: a.updated_at, kind: 'Asset', what: `${a.name} (${a.asset_tag})`, note: `Currently assigned · ${a.status}` }));
+      (acc.data ?? []).forEach((c: any) => out.push({ id: 'acc-' + c.id, when: c.checked_out_at, kind: 'Accessory', what: (Array.isArray(c.accessories) ? c.accessories[0] : c.accessories)?.name ?? 'Accessory', note: c.checked_in_at ? `Checked out → in ${new Date(c.checked_in_at).toLocaleDateString()}` : 'Checked out · still has it' }));
+      (cons.data ?? []).forEach((c: any) => out.push({ id: 'cons-' + c.id, when: c.used_at, kind: 'Consumable', what: (Array.isArray(c.consumables) ? c.consumables[0] : c.consumables)?.name ?? 'Consumable', note: `Used × ${c.qty}` }));
+      (lic.data ?? []).forEach((l: any) => out.push({ id: 'lic-' + l.id, when: l.checked_out_at, kind: 'License', what: (Array.isArray(l.licenses) ? l.licenses[0] : l.licenses)?.name ?? 'License', note: l.checked_in_at ? `Seat checked out → in ${new Date(l.checked_in_at).toLocaleDateString()}` : 'Seat checked out · still has it' }));
+      (kits.data ?? []).forEach((k: any) => out.push({ id: 'kit-' + k.id, when: k.checked_out_at, kind: 'Kit', what: (Array.isArray(k.kits) ? k.kits[0] : k.kits)?.name ?? 'Kit', note: 'Kit checked out' }));
+      (audit.data ?? []).forEach((a: any) => out.push({ id: 'audit-' + a.id, when: a.occurred_at, kind: 'Activity', what: a.action, note: a.resource_type + (a.details && Object.keys(a.details).length ? ' · ' + JSON.stringify(a.details).slice(0, 80) : '') }));
+      out.sort((x, y) => new Date(y.when).getTime() - new Date(x.when).getTime());
+      setRows(out);
+    })();
+    return () => { active = false; };
+  }, [organizationId, userId]);
+  const t = useTable(rows ?? [], (r, k) => k === 'when' ? new Date(r.when).getTime() : (r as any)[k]);
+  return <Modal title="History" subtitle={email} icon={<Clock size={18}/>} onClose={onClose} width={760}>
+    {rows === null ? <Skeleton rows={4}/> : <>
+      <div className="table-wrap"><table><thead><tr><Th t={t} k="when">WHEN</Th><Th t={t} k="kind">TYPE</Th><Th t={t} k="what">ITEM</Th><th>DETAILS</th></tr></thead><tbody>
+        {t.rows.map(r => <tr key={r.id}><td>{new Date(r.when).toLocaleString()}</td><td>{r.kind}</td><td><b>{r.what}</b></td><td className="wrap-cell muted">{r.note}</td></tr>)}
+        {!t.rows.length && <Empty cols={4} text="Nothing assigned or logged for this person yet."/>}
+      </tbody></table></div><Pager t={t}/>
+    </>}
+  </Modal>;
+}
+
 export function AuditPage({ organizationId }: { organizationId: string }) {
   const [rows, setRows] = useState<any[]>([]); const [action, setAction] = useState('all');
   const load = useCallback(async () => { if (!supabase) return; let q = supabase.from('audit_logs').select('id,actor_type,actor_user_id,action,resource_type,resource_id,outcome,details,occurred_at').eq('organization_id', organizationId).order('occurred_at', { ascending: false }).limit(200); if (action !== 'all') q = q.eq('resource_type', action); const { data } = await q; setRows(data ?? []); }, [organizationId, action]);
@@ -245,7 +287,7 @@ export function DiscoveryPanel({ organizationId, role, sites }: { organizationId
 /* ----------------------------------------- Device detail (charts + info) */
 const RANGES: Record<string, { label: string; hours: number }> = { '1': { label: '1 hour', hours: 1 }, '24': { label: '24 hours', hours: 24 }, '168': { label: '7 days', hours: 168 }, '720': { label: '30 days', hours: 720 } };
 export function DeviceDetail({ devices, initialId }: { devices: Dev[]; initialId?: string }) {
-  const [id, setId] = useState(initialId ?? devices[0]?.id ?? ''); const [range, setRange] = useState('24'); const [pts, setPts] = useState<any[]>([]); const [latest, setLatest] = useState<any>(null); const [logs, setLogs] = useState<any[]>([]);
+  const [id, setId] = useState(initialId ?? devices[0]?.id ?? ''); const [range, setRange] = useState('24'); const [pts, setPts] = useState<any[]>([]); const [latest, setLatest] = useState<any>(null); const [logs, setLogs] = useState<any[]>([]); const [history, setHistory] = useState<any[]>([]);
   useEffect(() => { if (!id && devices[0]) setId(devices[0].id); }, [devices, id]);
   const load = useCallback(async () => {
     if (!supabase || !id) return; const hours = RANGES[range].hours; const since = new Date(Date.now() - hours * 3600000).toISOString();
@@ -253,6 +295,9 @@ export function DeviceDetail({ devices, initialId }: { devices: Dev[]; initialId
     else { const { data } = await supabase.from('device_metrics_hourly').select('bucket,cpu_avg,memory_avg,disk_avg,net_sent_bps_avg,net_recv_bps_avg').eq('device_id', id).gte('bucket', since).order('bucket').limit(1000); setPts((data ?? []).map((r: any) => ({ t: new Date(r.bucket).getTime(), cpu: r.cpu_avg, mem: r.memory_avg, disk: r.disk_avg, up: r.net_sent_bps_avg, down: r.net_recv_bps_avg }))); }
     const { data: l } = await supabase.from('device_metrics').select('recorded_at,uptime_seconds,top_processes').eq('device_id', id).order('recorded_at', { ascending: false }).limit(1); setLatest(l?.[0] ?? null);
     const { data: lg } = await supabase.from('device_logs').select('id,level,message,logged_at').eq('device_id', id).order('logged_at', { ascending: false }).limit(6); setLogs(lg ?? []);
+    // Full lifecycle trail for this device: enrollment, archive/restore, uninstall, credential
+    // revokes and any asset actions tied to it, in one chronological list (Snipe-IT "asset history" style).
+    const { data: h } = await supabase.from('audit_logs').select('id,actor_type,actor_user_id,action,outcome,details,occurred_at').eq('resource_type', 'device').eq('resource_id', id).order('occurred_at', { ascending: false }).limit(100); setHistory(h ?? []);
   }, [id, range]);
   useTick(() => void load(), 1000, [load]);
   // Append each new sample as it arrives, so the chart moves between refreshes.
@@ -325,7 +370,11 @@ export function DeviceDetail({ devices, initialId }: { devices: Dev[]; initialId
     <div className="two-col">
       <section className="panel page-panel"><div className="panel-head"><div><h3>Top processes</h3><p>Latest sample · names only</p></div></div><div className="table-wrap"><table><thead><tr><Th t={pt} k="name">PROCESS</Th><Th t={pt} k="cpu">CPU</Th><Th t={pt} k="memory_mb">MEMORY</Th></tr></thead><tbody>{pt.rows.map((p: any, i: number) => <tr key={i}><td>{p.name}</td><td>{p.cpu}%</td><td>{p.memory_mb} MB</td></tr>)}{!pt.rows.length && <Empty cols={3} text="Needs agent v0.4.0+."/>}</tbody></table></div></section>
       <section className="panel page-panel"><div className="panel-head"><div><h3>Recent logs</h3></div></div><div className="table-wrap"><table><tbody>{logs.map(l => <tr key={l.id}><td><Sev level={l.level}/></td><td className="wrap-cell"><LongText text={l.message}/></td><td>{ago(l.logged_at)}</td></tr>)}{!logs.length && <Empty cols={3} text="No warnings or errors."/>}</tbody></table></div></section>
-    </div></div>;
+    </div>
+    <section className="panel page-panel"><div className="panel-head"><div><h3>Device history</h3><p>Enrollment, archive/restore, uninstall and credential actions for this device.</p></div></div><div className="table-wrap"><table><thead><tr><th>WHEN</th><th>ACTOR</th><th>ACTION</th><th>RESULT</th><th>DETAILS</th></tr></thead><tbody>
+      {history.map(h => <tr key={h.id}><td>{new Date(h.occurred_at).toLocaleString()}</td><td>{h.actor_type}{h.actor_user_id ? ' · ' + String(h.actor_user_id).slice(0, 8) : ''}</td><td><b>{h.action}</b></td><td>{h.outcome}</td><td className="wrap-cell muted">{h.details && Object.keys(h.details).length ? JSON.stringify(h.details).slice(0, 140) : ''}</td></tr>)}
+      {!history.length && <Empty cols={5} text="No history recorded yet for this device."/>}</tbody></table></div></section>
+    </div>;
 }
 
 /* ---------------------------------------------------- NOC wall (full screen) */

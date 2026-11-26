@@ -1,5 +1,5 @@
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Activity, Pencil, Users, Bell, Boxes, Cable, ChevronDown, CircleHelp, LayoutDashboard, LogOut, Network, Search, Settings, ShieldCheck, ScrollText, Globe2, FileBarChart, ClipboardList, Gauge, MonitorUp, Zap, LockKeyhole, Eye, EyeOff, MapPin, Server, ArrowUpRight, UserRound, KeyRound, Sun, Moon, Languages, MoreHorizontal, Building2, Check, Plus, Trash2, RefreshCw, Layers, MessageSquare, Wrench, AlertTriangle, Crown, Sparkles, type LucideIcon } from 'lucide-react';
+import { Activity, Pencil, Users, Bell, Boxes, Cable, ChevronDown, CircleHelp, LayoutDashboard, LogOut, Network, Search, Settings, ShieldCheck, ScrollText, Globe2, FileBarChart, ClipboardList, Gauge, MonitorUp, Zap, LockKeyhole, Eye, EyeOff, MapPin, Server, ArrowUpRight, UserRound, KeyRound, Sun, Moon, Languages, MoreHorizontal, Building2, Check, Plus, Trash2, RefreshCw, Layers, MessageSquare, Wrench, AlertTriangle, Crown, Sparkles, Copy, History, type LucideIcon } from 'lucide-react';
 import type { Session, User } from '@supabase/supabase-js';
 
 type Device = { id: string; hostname: string; ip_address: string | null; status: string; device_type: string | null; last_seen_at: string | null; site_id?: string; archived_at?: string | null; agent_version?: string | null; parent_device_id?: string | null; os_name?: string | null };
@@ -10,7 +10,7 @@ import { LiveOverview } from './LiveOverview';
 import { supabase, configured, apiUrl, api, fmtBps, LATEST_AGENT_VERSION, SELF_UPDATE_FROM, versionAtLeast, publishedAgentVersion, pendingAuthAction } from './lib';
 import { AgentInstaller } from './AgentInstaller';
 import { Toaster, ConfirmHost, Flash, confirmDialog, toast, usePrefs, tr, CommandPalette, Drawer, Skeleton, EmptyState, useTable, Th, Pager, Select, Modal, type Command } from './ui';
-import { LogsPage, UptimePage, ReportsPage, AuditPage, PlatformPage, ChannelsPanel, MaintenancePanel, DiscoveryPanel, DeviceDetail, NocWall, AssetsPage, TicketsPage } from './Monitoring';
+import { LogsPage, UptimePage, ReportsPage, AuditPage, PlatformPage, ChannelsPanel, MaintenancePanel, DiscoveryPanel, DeviceDetail, NocWall, AssetsPage, TicketsPage, UserHistoryModal } from './Monitoring';
 import { VirtualizationPage } from './Virtualization';
 const nav = [
   { label: 'Overview', icon: LayoutDashboard, path: '/' }, { label: 'Devices', icon: Boxes, path: '/devices' },
@@ -492,6 +492,30 @@ function emptyPermissions(): RolePermission[] {
   return PERMISSION_RESOURCES.map(r => ({ resource: r.value, can_view: false, can_create: false, can_edit: false, can_delete: false }));
 }
 const PERM_KEYS: { key: keyof Omit<RolePermission,'resource'>; label: string }[] = [{ key: 'can_view', label: 'View' }, { key: 'can_create', label: 'Create' }, { key: 'can_edit', label: 'Edit' }, { key: 'can_delete', label: 'Delete' }];
+// Mirrors the has_permission() Postgres function's built-in system-tier matrix exactly, so a
+// built-in role cloned into a custom role starts with the same effective access it had before.
+function builtinPermissionsFor(role: 'owner' | 'admin' | 'operator' | 'viewer'): RolePermission[] {
+  const can = (action: 'view' | 'create' | 'edit' | 'delete', resource: string): boolean => {
+    switch (action) {
+      case 'view':
+        if (['notifications', 'platform', 'team'].includes(resource)) return role === 'owner' || role === 'admin';
+        return true;
+      case 'create':
+        if (['notifications', 'team'].includes(resource)) return role === 'owner' || role === 'admin';
+        if (['discovery', 'platform', 'reports'].includes(resource)) return false;
+        return role === 'owner' || role === 'admin' || role === 'operator';
+      case 'edit':
+        if (['devices', 'notifications', 'team'].includes(resource)) return role === 'owner' || role === 'admin';
+        if (['platform', 'reports'].includes(resource)) return false;
+        return role === 'owner' || role === 'admin' || role === 'operator';
+      case 'delete':
+        if (['sites', 'networks', 'devices', 'notifications', 'team'].includes(resource)) return role === 'owner' || role === 'admin';
+        if (['discovery', 'platform', 'reports'].includes(resource)) return false;
+        return role === 'owner' || role === 'admin' || role === 'operator';
+    }
+  };
+  return PERMISSION_RESOURCES.map(r => ({ resource: r.value, can_view: can('view', r.value), can_create: can('create', r.value), can_edit: can('edit', r.value), can_delete: can('delete', r.value) }));
+}
 const BUILTIN_SUMMARY: Record<string, string[]> = {
   owner: ['Everything', 'Billing and workspace deletion'],
   admin: ['Everything except deleting the workspace', 'Team and settings'],
@@ -514,7 +538,9 @@ function TeamManagement({organizationId,role,accessToken,currentUserId}:{organiz
   const [loading,setLoading]=useState(true); const [error,setError]=useState('');
   const [busyId,setBusyId]=useState('');
   const [editingMember,setEditingMember]=useState<TeamMember|null>(null);
+  const [historyMember,setHistoryMember]=useState<TeamMember|null>(null);
   const [editingRole,setEditingRole]=useState<CustomRole|'new'|null>(null);
+  const [cloneSeed,setCloneSeed]=useState<{name:string;perms:RolePermission[]}|null>(null);
   const [inviting,setInviting]=useState(false);
   const [view,setView]=useState<'members'|'roles'>('members');
   const load = useCallback(async () => {
@@ -579,7 +605,7 @@ function TeamManagement({organizationId,role,accessToken,currentUserId}:{organiz
             <td><div className="member-cell"><span className={m.role === 'owner' ? 'member-av owner' : 'member-av'}>{initials(m.email)}</span><div><b>{m.email}</b>{self && <small>You</small>}</div></div></td>
             <td><span className={`role-badge ${m.role}`}>{roleLabel(m)}</span></td>
             <td className="muted">{m.created_at ? new Date(m.created_at).toLocaleDateString() : '—'}</td>
-            <td>{canEditThis ? <div className="row-actions"><button className="secondary-action sm" disabled={busyId===m.user_id} onClick={()=>setEditingMember(m)}><KeyRound size={14}/>Change role</button><button className="icon-only danger" aria-label={`Remove ${m.email}`} title="Remove member" disabled={busyId===m.user_id} onClick={()=>removeMember(m)}><Trash2 size={15}/></button></div> : <span className="muted cell-note">{self ? 'That’s you' : 'Owner'}</span>}</td>
+            <td><div className="row-actions"><button className="secondary-action sm" onClick={()=>setHistoryMember(m)}><History size={14}/>History</button>{canEditThis ? <><button className="secondary-action sm" disabled={busyId===m.user_id} onClick={()=>setEditingMember(m)}><KeyRound size={14}/>Change role</button><button className="icon-only danger" aria-label={`Remove ${m.email}`} title="Remove member" disabled={busyId===m.user_id} onClick={()=>removeMember(m)}><Trash2 size={15}/></button></> : <span className="muted cell-note">{self ? 'That’s you' : 'Owner'}</span>}</div></td>
           </tr>
         ); })}</tbody>
       </table></div><Pager t={mt}/></>}
@@ -592,7 +618,7 @@ function TeamManagement({organizationId,role,accessToken,currentUserId}:{organiz
         {(['owner','admin','operator','viewer'] as const).map(k => { const RoleIcon = ROLE_ICON[k]; return <article key={k} className="role-tile builtin">
           <header><span className="role-tile-title"><span className={`role-tile-icon ${k}`}><RoleIcon size={15}/></span><span className={`role-badge ${k}`}>{k}</span></span><span className="role-count">{countFor(k)} member{countFor(k) === 1 ? '' : 's'}</span></header>
           <ul>{BUILTIN_SUMMARY[k].map(s => <li key={s}><Check size={13}/>{s}</li>)}</ul>
-          <footer><span className="muted">Built-in · can’t be changed</span></footer>
+          <footer><span className="muted">Built-in · can’t be changed</span><button className="secondary-action sm" title="Make an editable copy of this role" onClick={()=>{ setCloneSeed({ name: `${k.charAt(0).toUpperCase()}${k.slice(1)} (copy)`, perms: builtinPermissionsFor(k) }); setEditingRole('new'); }}><Copy size={14}/>Clone</button></footer>
         </article>; })}
         {roles.map(r => { const sum = permSummary(r.permissions); return <article key={r.id} className="role-tile custom">
           <header><span className="role-tile-title"><span className="role-tile-icon custom"><Sparkles size={15}/></span><span className="role-badge custom">{r.name}</span></span><span className="role-count">{countFor(r.id)} member{countFor(r.id) === 1 ? '' : 's'}</span></header>
@@ -605,7 +631,8 @@ function TeamManagement({organizationId,role,accessToken,currentUserId}:{organiz
 
     {inviting && <InviteModal organizationId={organizationId} accessToken={accessToken} canGrantAdmin={role==='owner'} customRoles={roles} onCreateRole={()=>{ setInviting(false); setView('roles'); setEditingRole('new'); }} onDone={async()=>{ setInviting(false); await load(); }} onClose={()=>setInviting(false)}/>}
     {editingMember && <PermissionsModal member={editingMember} canGrantAdmin={role==='owner'} busy={busyId===editingMember.user_id} customRoles={roles} onSave={(newRole)=>changeRole(editingMember, newRole)} onClose={()=>setEditingMember(null)}/>}
-    {editingRole && <CustomRoleModal role={editingRole==='new'?null:editingRole} busy={!!busyId} onSave={(name,perms)=>saveRole(name, perms, editingRole==='new'?undefined:editingRole.id)} onClose={()=>setEditingRole(null)}/>}
+    {historyMember && <UserHistoryModal organizationId={organizationId} email={historyMember.email} userId={historyMember.user_id} onClose={()=>setHistoryMember(null)}/>}
+    {editingRole && <CustomRoleModal role={editingRole==='new'?null:editingRole} seed={editingRole==='new'?cloneSeed:null} busy={!!busyId} onSave={(name,perms)=>saveRole(name, perms, editingRole==='new'?undefined:editingRole.id)} onClose={()=>{ setEditingRole(null); setCloneSeed(null); }}/>}
   </div>;
 }
 // Role picker shared by Invite and Change role: radio cards, built-in first, then custom.
@@ -651,12 +678,13 @@ function PermissionsModal({member,canGrantAdmin,busy,customRoles,onSave,onClose}
     </div>
   </Modal>;
 }
-function CustomRoleModal({role,busy,onSave,onClose}:{role:CustomRole|null;busy:boolean;onSave:(name:string,permissions:RolePermission[])=>void;onClose:()=>void}) {
-  const [name,setName]=useState(role?.name||'');
+function CustomRoleModal({role,seed,busy,onSave,onClose}:{role:CustomRole|null;seed?:{name:string;perms:RolePermission[]}|null;busy:boolean;onSave:(name:string,permissions:RolePermission[])=>void;onClose:()=>void}) {
+  const [name,setName]=useState(role?.name||seed?.name||'');
   const [perms,setPerms]=useState<RolePermission[]>(() => {
     const base = emptyPermissions();
-    if (!role) return base;
-    return base.map(p => role.permissions.find(rp => rp.resource === p.resource) || p);
+    if (role) return base.map(p => role.permissions.find(rp => rp.resource === p.resource) || p);
+    if (seed) return base.map(p => seed.perms.find(sp => sp.resource === p.resource) || p);
+    return base;
   });
   const toggle = (resource: string, key: keyof Omit<RolePermission,'resource'>) => setPerms(prev => prev.map(p => {
     if (p.resource !== resource) return p;
