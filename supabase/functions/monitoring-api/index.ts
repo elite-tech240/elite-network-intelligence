@@ -1734,6 +1734,94 @@ async function handle(req: Request): Promise<Response> {
     return json({ ok: true, checkout: logRow }, 201);
   }
 
+  // ---- Ticket categories (GLPI-style triage categories) ---------------------------------------
+  if (req.method === "GET" && path === "/ticket-categories") {
+    const organizationId = url.searchParams.get("organization_id") || "";
+    await requirePermission(req, organizationId, "tickets", "view");
+    const { data, error } = await admin.from("ticket_categories").select("*").eq("organization_id", organizationId).order("name");
+    if (error) return fail("Could not load ticket categories", 500);
+    return json({ categories: data || [] });
+  }
+
+  if (req.method === "POST" && path === "/ticket-categories") {
+    const body = await readJson(req);
+    const organizationId = String(body.organization_id || "");
+    const { user } = await requirePermission(req, organizationId, "tickets", "create");
+    const name = String(body.name || "").trim();
+    if (!name) return fail("Name is required");
+    const { data, error } = await admin.from("ticket_categories").insert({ organization_id: organizationId, name }).select("*").single();
+    if (error) return fail("Could not create that category", 500);
+    await audit(organizationId, "user", user.id, "create_ticket_category", "ticket_category", data.id, { name });
+    return json({ ok: true, category: data }, 201);
+  }
+
+  const ticketCategoryIdMatch = path.match(new RegExp(`^/ticket-categories/${uuidPart}$`, "i"));
+  if (req.method === "DELETE" && ticketCategoryIdMatch) {
+    const categoryId = ticketCategoryIdMatch[1];
+    const organizationId = url.searchParams.get("organization_id") || "";
+    const { user } = await requirePermission(req, organizationId, "tickets", "delete");
+    const { data: existing } = await admin.from("ticket_categories").select("id").eq("id", categoryId).eq("organization_id", organizationId).maybeSingle();
+    if (!existing) return fail("Category not found in this workspace", 404);
+    await admin.from("tickets").update({ category_id: null }).eq("category_id", categoryId);
+    const { error } = await admin.from("ticket_categories").delete().eq("id", categoryId);
+    if (error) return fail("Could not delete that category", 500);
+    await audit(organizationId, "user", user.id, "delete_ticket_category", "ticket_category", categoryId, {});
+    return json({ ok: true, category_id: categoryId });
+  }
+
+  // ---- Knowledge base (GLPI-style articles agents can write and link from a ticket) -----------
+  if (req.method === "GET" && path === "/kb-articles") {
+    const organizationId = url.searchParams.get("organization_id") || "";
+    await requirePermission(req, organizationId, "tickets", "view");
+    const { data, error } = await admin.from("kb_articles").select("*").eq("organization_id", organizationId).order("updated_at", { ascending: false });
+    if (error) return fail("Could not load the knowledge base", 500);
+    return json({ articles: data || [] });
+  }
+
+  if (req.method === "POST" && path === "/kb-articles") {
+    const body = await readJson(req);
+    const organizationId = String(body.organization_id || "");
+    const { user } = await requirePermission(req, organizationId, "tickets", "create");
+    const title = String(body.title || "").trim();
+    if (!title) return fail("Title is required");
+    const { data, error } = await admin.from("kb_articles").insert({
+      organization_id: organizationId, title, body: body.body ? String(body.body) : "", category: body.category ? String(body.category).trim() : null, created_by: user.id,
+    }).select("*").single();
+    if (error) return fail("Could not create that article", 500);
+    await audit(organizationId, "user", user.id, "create_kb_article", "kb_article", data.id, { title });
+    return json({ ok: true, article: data }, 201);
+  }
+
+  const kbArticleIdMatch = path.match(new RegExp(`^/kb-articles/${uuidPart}$`, "i"));
+  if (req.method === "PUT" && kbArticleIdMatch) {
+    const articleId = kbArticleIdMatch[1];
+    const body = await readJson(req);
+    const organizationId = String(body.organization_id || "");
+    const { user } = await requirePermission(req, organizationId, "tickets", "edit");
+    const { data: existing } = await admin.from("kb_articles").select("id").eq("id", articleId).eq("organization_id", organizationId).maybeSingle();
+    if (!existing) return fail("Article not found in this workspace", 404);
+    const patch: Record<string, unknown> = { updated_at: new Date().toISOString() };
+    for (const k of ["title", "body", "category"]) {
+      if (body[k] !== undefined) patch[k] = typeof body[k] === "string" ? (k === "body" ? body[k] : body[k].trim() || null) : body[k];
+    }
+    const { data, error } = await admin.from("kb_articles").update(patch).eq("id", articleId).select("*").single();
+    if (error) return fail("Could not update that article", 500);
+    await audit(organizationId, "user", user.id, "update_kb_article", "kb_article", articleId, {});
+    return json({ ok: true, article: data });
+  }
+
+  if (req.method === "DELETE" && kbArticleIdMatch) {
+    const articleId = kbArticleIdMatch[1];
+    const organizationId = url.searchParams.get("organization_id") || "";
+    const { user } = await requirePermission(req, organizationId, "tickets", "delete");
+    const { data: existing } = await admin.from("kb_articles").select("id").eq("id", articleId).eq("organization_id", organizationId).maybeSingle();
+    if (!existing) return fail("Article not found in this workspace", 404);
+    const { error } = await admin.from("kb_articles").delete().eq("id", articleId);
+    if (error) return fail("Could not delete that article", 500);
+    await audit(organizationId, "user", user.id, "delete_kb_article", "kb_article", articleId, {});
+    return json({ ok: true, article_id: articleId });
+  }
+
   // ---- Tickets (GLPI style helpdesk) ----------------------------------------------------------
   if (req.method === "GET" && path === "/tickets") {
     const organizationId = url.searchParams.get("organization_id") || "";
@@ -1752,7 +1840,7 @@ async function handle(req: Request): Promise<Response> {
     const row = {
       organization_id: organizationId, title, description: body.description ? String(body.description).trim() : null,
       priority: String(body.priority || "medium"), requester_email: body.requester_email ? String(body.requester_email).trim() : null,
-      device_id: body.device_id || null, assigned_user_id: body.assigned_user_id || null, created_by: user.id,
+      device_id: body.device_id || null, assigned_user_id: body.assigned_user_id || null, category_id: body.category_id || null, created_by: user.id,
     };
     const { data, error } = await admin.from("tickets").insert(row).select("*").single();
     if (error) return fail("Could not create ticket", 500);
@@ -1769,7 +1857,7 @@ async function handle(req: Request): Promise<Response> {
     const { data: existing } = await admin.from("tickets").select("id,status").eq("id", ticketId).eq("organization_id", organizationId).maybeSingle();
     if (!existing) return fail("Ticket not found in this workspace", 404);
     const patch: Record<string, unknown> = { updated_at: new Date().toISOString() };
-    for (const k of ["title", "description", "status", "priority", "requester_email", "assigned_user_id", "device_id"]) {
+    for (const k of ["title", "description", "status", "priority", "requester_email", "assigned_user_id", "device_id", "category_id"]) {
       if (body[k] !== undefined) patch[k] = typeof body[k] === "string" ? body[k].trim() || null : body[k];
     }
     if (patch.status === "resolved" && existing.status !== "resolved") patch.resolved_at = new Date().toISOString();

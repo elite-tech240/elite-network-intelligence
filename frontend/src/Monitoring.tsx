@@ -1094,9 +1094,24 @@ const TICKET_STATUSES = [
 const TICKET_PRIORITIES = [
   { value: 'low', label: 'Low' }, { value: 'medium', label: 'Medium' }, { value: 'high', label: 'High' }, { value: 'critical', label: 'Critical' },
 ];
-type Ticket = { id: string; number: number; title: string; description: string | null; status: string; priority: string; requester_email: string | null; device_id: string | null; assigned_user_id: string | null; created_at: string; updated_at: string; resolved_at: string | null };
-export function TicketsPage({ organizationId, token, devices }: { organizationId: string; role: Role; token: string; devices: Dev[] }) {
+type Ticket = { id: string; number: number; title: string; description: string | null; status: string; priority: string; requester_email: string | null; device_id: string | null; assigned_user_id: string | null; category_id: string | null; created_at: string; updated_at: string; resolved_at: string | null };
+type TicketCategory = { id: string; name: string };
+type KbArticle = { id: string; title: string; body: string; category: string | null; updated_at: string };
+// GLPI-style Ticketing: Tickets (incidents/requests) plus Categories and a Knowledge base, as
+// subtabs of one module — the same pattern used for Assets/Accessories/Consumables/etc.
+export function TicketsPage({ organizationId, role, token, devices }: { organizationId: string; role: Role; token: string; devices: Dev[] }) {
+  const [module, setModule] = useState('tickets');
+  return <div className="sites-workspace">
+    <div className="filter-bar"><Tabs items={[{ id: 'tickets', label: 'Tickets' }, { id: 'categories', label: 'Categories' }, { id: 'kb', label: 'Knowledge base' }]} active={module} onChange={setModule}/></div>
+    {module === 'tickets' && <TicketsInventoryPage organizationId={organizationId} role={role} token={token} devices={devices}/>}
+    {module === 'categories' && <TicketCategoriesPage organizationId={organizationId} role={role} token={token}/>}
+    {module === 'kb' && <KnowledgeBasePage organizationId={organizationId} role={role} token={token}/>}
+  </div>;
+}
+function TicketsInventoryPage({ organizationId, token, devices }: { organizationId: string; role: Role; token: string; devices: Dev[] }) {
   const members = useOrgMembers(organizationId, token);
+  const [categories, setCategories] = useState<TicketCategory[]>([]);
+  useEffect(() => { if (!supabase) return; supabase.from('ticket_categories').select('id,name').eq('organization_id', organizationId).order('name').then(({ data }) => setCategories(data ?? [])); }, [organizationId]);
   const [rows, setRows] = useState<Ticket[]>([]); const [loading, setLoading] = useState(true); const [err, setErr] = useState('');
   const [filter, setFilter] = useState('open'); const [creating, setCreating] = useState(false); const [openId, setOpenId] = useState('');
   const load = useCallback(async () => {
@@ -1138,9 +1153,10 @@ export function TicketsPage({ organizationId, token, devices }: { organizationId
       <button className="primary-action" onClick={() => setCreating(true)}><Plus size={15}/>New ticket</button></div>
       <div className="filter-bar"><Tabs items={[{ id: 'all', label: `All (${rows.length})` }, ...TICKET_STATUSES.map(s => ({ id: s.value, label: `${s.label} (${rows.filter(r => r.status === s.value).length})` }))]} active={filter} onChange={setFilter}/></div>
       {loading ? <Skeleton rows={3}/> : !t.rows.length ? <EmptyState icon={<MessageSquare size={22}/>} title="No tickets" text="Nothing matches this filter."/> : <><div className="table-wrap"><table>
-        <thead><tr><th>#</th><Th t={t} k="title">TITLE</Th><Th t={t} k="priority">PRIORITY</Th><Th t={t} k="status">STATUS</Th><th>ASSIGNED TO</th><th>DEVICE</th><Th t={t} k="updated_at">UPDATED</Th></tr></thead>
+        <thead><tr><th>#</th><Th t={t} k="title">TITLE</Th><th>CATEGORY</th><Th t={t} k="priority">PRIORITY</Th><Th t={t} k="status">STATUS</Th><th>ASSIGNED TO</th><th>DEVICE</th><Th t={t} k="updated_at">UPDATED</Th></tr></thead>
         <tbody>{t.rows.map(r => <tr key={r.id} className="row-click" onClick={() => setOpenId(r.id)}>
           <td>#{r.number}</td><td><b>{r.title}</b></td>
+          <td className="muted">{categories.find(c => c.id === r.category_id)?.name ?? '—'}</td>
           <td><span className={`sev sev-${r.priority === 'critical' ? 'critical' : r.priority === 'high' ? 'warning' : 'info'}`}>{TICKET_PRIORITIES.find(p => p.value === r.priority)?.label}</span></td>
           <td><span className={`status-pill ${r.status === 'open' ? 'pending' : r.status === 'resolved' || r.status === 'closed' ? 'online' : 'offline'}`}><i/>{TICKET_STATUSES.find(s => s.value === r.status)?.label}</span></td>
           <td onClick={e => e.stopPropagation()}><Select className="filter-select" value={r.assigned_user_id ?? ''} onChange={e => setAssignee(r, e.target.value)}><option value="">Unassigned</option>{members.map(m => <option key={m.user_id} value={m.user_id}>{m.email}</option>)}</Select></td>
@@ -1148,17 +1164,18 @@ export function TicketsPage({ organizationId, token, devices }: { organizationId
         </tr>)}</tbody>
       </table></div><Pager t={t}/></>}
     </section>
-    {creating && <TicketModal devices={devices} members={members} onSave={create} onClose={() => setCreating(false)}/>}
-    {open && <TicketDrawer ticket={open} organizationId={organizationId} token={token} devices={devices} members={members} onStatus={s => setStatus(open, s)} onAssign={id => setAssignee(open, id)} onClose={() => { setOpenId(''); void load(); }}/>}
+    {creating && <TicketModal devices={devices} members={members} categories={categories} onSave={create} onClose={() => setCreating(false)}/>}
+    {open && <TicketDrawer ticket={open} organizationId={organizationId} token={token} devices={devices} members={members} categories={categories} onStatus={s => setStatus(open, s)} onAssign={id => setAssignee(open, id)} onClose={() => { setOpenId(''); void load(); }}/>}
   </div>;
 }
-function TicketModal({ devices, members, onSave, onClose }: { devices: Dev[]; members: OrgMember[]; onSave: (v: Partial<Ticket>) => void; onClose: () => void }) {
+function TicketModal({ devices, members, categories, onSave, onClose }: { devices: Dev[]; members: OrgMember[]; categories: TicketCategory[]; onSave: (v: Partial<Ticket>) => void; onClose: () => void }) {
   const [title, setTitle] = useState(''); const [description, setDescription] = useState(''); const [priority, setPriority] = useState('medium');
-  const [requesterEmail, setRequesterEmail] = useState(''); const [deviceId, setDeviceId] = useState(''); const [assignedUserId, setAssignedUserId] = useState(''); const [busy, setBusy] = useState(false);
+  const [requesterEmail, setRequesterEmail] = useState(''); const [deviceId, setDeviceId] = useState(''); const [assignedUserId, setAssignedUserId] = useState(''); const [categoryId, setCategoryId] = useState(''); const [busy, setBusy] = useState(false);
   return <Modal title="New ticket" icon={<MessageSquare size={17}/>} onClose={onClose}>
-    <form className="modal-form" onSubmit={async e => { e.preventDefault(); setBusy(true); await onSave({ title, description, priority, requester_email: requesterEmail || undefined, device_id: deviceId || undefined, assigned_user_id: assignedUserId || undefined }); setBusy(false); }}>
+    <form className="modal-form" onSubmit={async e => { e.preventDefault(); setBusy(true); await onSave({ title, description, priority, requester_email: requesterEmail || undefined, device_id: deviceId || undefined, assigned_user_id: assignedUserId || undefined, category_id: categoryId || undefined }); setBusy(false); }}>
       <label className="span-2">Title<input value={title} onChange={e => setTitle(e.target.value)} required maxLength={160} placeholder="Printer on 2nd floor not working"/></label>
       <label className="span-2">Description<input value={description} onChange={e => setDescription(e.target.value)} maxLength={1000} placeholder="What's happening, since when…"/></label>
+      <label>Category <em className="optional">Optional</em><Select value={categoryId} onChange={e => setCategoryId(e.target.value)}><option value="">None</option>{categories.map(c => <option key={c.id} value={c.id}>{c.name}</option>)}</Select></label>
       <label>Priority<Select value={priority} onChange={e => setPriority(e.target.value)}>{TICKET_PRIORITIES.map(p => <option key={p.value} value={p.value}>{p.label}</option>)}</Select></label>
       <label>Assigned to <em className="optional">Optional</em><Select value={assignedUserId} onChange={e => setAssignedUserId(e.target.value)}><option value="">Unassigned</option>{members.map(m => <option key={m.user_id} value={m.user_id}>{m.email}</option>)}</Select></label>
       <label>Related device <em className="optional">Optional</em><Select value={deviceId} onChange={e => setDeviceId(e.target.value)}><option value="">None</option>{devices.map(d => <option key={d.id} value={d.id}>{d.hostname}</option>)}</Select></label>
@@ -1167,7 +1184,7 @@ function TicketModal({ devices, members, onSave, onClose }: { devices: Dev[]; me
     </form>
   </Modal>;
 }
-function TicketDrawer({ ticket, organizationId, token, devices, members, onStatus, onAssign, onClose }: { ticket: Ticket; organizationId: string; token: string; devices: Dev[]; members: OrgMember[]; onStatus: (s: string) => void; onAssign: (userId: string) => void; onClose: () => void }) {
+function TicketDrawer({ ticket, organizationId, token, devices, members, categories, onStatus, onAssign, onClose }: { ticket: Ticket; organizationId: string; token: string; devices: Dev[]; members: OrgMember[]; categories: TicketCategory[]; onStatus: (s: string) => void; onAssign: (userId: string) => void; onClose: () => void }) {
   const [comments, setComments] = useState<{ id: string; author_email: string | null; body: string; created_at: string }[]>([]);
   const [text, setText] = useState(''); const [busy, setBusy] = useState(false); const [err, setErr] = useState('');
   const load = useCallback(async () => {
@@ -1187,6 +1204,7 @@ function TicketDrawer({ ticket, organizationId, token, devices, members, onStatu
       <Select className="filter-select" value={ticket.status} onChange={e => onStatus(e.target.value)}>{TICKET_STATUSES.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}</Select>
       <Select className="filter-select" value={ticket.assigned_user_id ?? ''} onChange={e => onAssign(e.target.value)}><option value="">Unassigned</option>{members.map(m => <option key={m.user_id} value={m.user_id}>{m.email}</option>)}</Select>
       <span className={`sev sev-${ticket.priority === 'critical' ? 'critical' : ticket.priority === 'high' ? 'warning' : 'info'}`}>{TICKET_PRIORITIES.find(p => p.value === ticket.priority)?.label}</span>
+      {ticket.category_id && <span className="muted">category: {categories.find(c => c.id === ticket.category_id)?.name ?? '—'}</span>}
       {ticket.device_id && <span className="muted">device: {devices.find(d => d.id === ticket.device_id)?.hostname ?? '—'}</span>}
     </div>
     {ticket.description && <p className="muted" style={{ lineHeight: 1.6 }}>{ticket.description}</p>}
@@ -1201,4 +1219,87 @@ function TicketDrawer({ ticket, organizationId, token, devices, members, onStatu
       <button className="primary-action" onClick={send} disabled={busy || !text.trim()}>{busy ? 'Sending…' : 'Reply'}</button>
     </div>
   </Drawer>;
+}
+// ---- GLPI-style Ticket categories: simple named buckets used to triage tickets --------------
+function TicketCategoriesPage({ organizationId, role, token }: { organizationId: string; role: Role; token: string }) {
+  const [rows, setRows] = useState<TicketCategory[]>([]); const [loading, setLoading] = useState(true); const [err, setErr] = useState(''); const [name, setName] = useState(''); const [busy, setBusy] = useState(false);
+  const load = useCallback(async () => {
+    setLoading(true); setErr('');
+    try { const r = await api<{ categories: TicketCategory[] }>(`/ticket-categories?organization_id=${organizationId}`, token); setRows(r.categories); }
+    catch (e) { setErr(e instanceof Error ? e.message : 'Could not load categories.'); }
+    finally { setLoading(false); }
+  }, [organizationId, token]);
+  useEffect(() => { void load(); }, [load]);
+  const add = async (e: FormEvent) => {
+    e.preventDefault(); if (!name.trim()) return; setBusy(true); setErr('');
+    try { await api('/ticket-categories', token, { method: 'POST', body: { organization_id: organizationId, name: name.trim() } }); setName(''); toast('Category added'); await load(); }
+    catch (e) { setErr(e instanceof Error ? e.message : 'Could not add that category.'); }
+    finally { setBusy(false); }
+  };
+  const remove = async (c: TicketCategory) => {
+    if (!await confirmDialog(`Delete the "${c.name}" category? Tickets using it become uncategorized.`, { confirmText: 'Delete', danger: true })) return;
+    try { await api(`/ticket-categories/${c.id}?organization_id=${organizationId}`, token, { method: 'DELETE' }); toast('Category deleted'); await load(); }
+    catch (e) { setErr(e instanceof Error ? e.message : 'Could not delete that category.'); }
+  };
+  return <section className="panel page-panel">
+    <div className="panel-head"><div><h3>Ticket categories</h3><p>Group tickets so trends and backlog are easy to triage, GLPI-style.</p></div></div>
+    <Flash kind="error" msg={err}/>
+    {isOp(role) && <form className="modal-form" style={{ gridTemplateColumns: '1fr auto', marginBottom: 16 }} onSubmit={add}>
+      <input value={name} onChange={e => setName(e.target.value)} placeholder="e.g. Hardware, Network, Access request" maxLength={80}/>
+      <button className="primary-action" disabled={busy || !name.trim()}><Plus size={15}/>Add</button>
+    </form>}
+    {loading ? <Skeleton rows={3}/> : !rows.length ? <EmptyState icon={<Boxes size={22}/>} title="No categories yet" text="Add one to start grouping tickets."/> : <div className="table-wrap"><table><thead><tr><th>NAME</th>{isOp(role) && <th>ACTIONS</th>}</tr></thead><tbody>
+      {rows.map(c => <tr key={c.id}><td><b>{c.name}</b></td>{isOp(role) && <td><button className="icon-only danger" aria-label={`Delete ${c.name}`} title="Delete category" onClick={() => remove(c)}><Trash2 size={15}/></button></td>}</tr>)}
+    </tbody></table></div>}
+  </section>;
+}
+// ---- GLPI-style Knowledge base: articles agents can write and link from a ticket ------------
+function KnowledgeBasePage({ organizationId, role, token }: { organizationId: string; role: Role; token: string }) {
+  const [rows, setRows] = useState<KbArticle[]>([]); const [loading, setLoading] = useState(true); const [err, setErr] = useState('');
+  const [editing, setEditing] = useState<KbArticle | 'new' | null>(null); const [openId, setOpenId] = useState('');
+  const load = useCallback(async () => {
+    setLoading(true); setErr('');
+    try { const r = await api<{ articles: KbArticle[] }>(`/kb-articles?organization_id=${organizationId}`, token); setRows(r.articles); }
+    catch (e) { setErr(e instanceof Error ? e.message : 'Could not load the knowledge base.'); }
+    finally { setLoading(false); }
+  }, [organizationId, token]);
+  useEffect(() => { void load(); }, [load]);
+  const save = async (v: { title: string; body: string; category: string }, id?: string) => {
+    try {
+      if (id) await api(`/kb-articles/${id}`, token, { method: 'PUT', body: { organization_id: organizationId, ...v } });
+      else await api('/kb-articles', token, { method: 'POST', body: { organization_id: organizationId, ...v } });
+      toast(id ? 'Article updated' : 'Article added'); setEditing(null); await load();
+    } catch (e) { setErr(e instanceof Error ? e.message : 'Could not save that article.'); }
+  };
+  const remove = async (a: KbArticle) => {
+    if (!await confirmDialog(`Delete "${a.title}"?`, { confirmText: 'Delete', danger: true })) return;
+    try { await api(`/kb-articles/${a.id}?organization_id=${organizationId}`, token, { method: 'DELETE' }); toast('Article deleted'); setOpenId(''); await load(); }
+    catch (e) { setErr(e instanceof Error ? e.message : 'Could not delete that article.'); }
+  };
+  const open = rows.find(a => a.id === openId) ?? null;
+  return <section className="panel page-panel">
+    <div className="panel-head"><div><h3>Knowledge base</h3><p>Write-ups the team can search before opening a new ticket, GLPI-style.</p></div>
+      {isOp(role) && <button className="primary-action" onClick={() => setEditing('new')}><Plus size={15}/>New article</button>}</div>
+    <Flash kind="error" msg={err}/>
+    {loading ? <Skeleton rows={3}/> : !rows.length ? <EmptyState icon={<MessageSquare size={22}/>} title="No articles yet" text="Write the first how-to or troubleshooting note."/> : <div className="table-wrap"><table><thead><tr><th>TITLE</th><th>CATEGORY</th><th>UPDATED</th></tr></thead><tbody>
+      {rows.map(a => <tr key={a.id} className="row-click" onClick={() => setOpenId(a.id)}><td><b>{a.title}</b></td><td className="muted">{a.category ?? '—'}</td><td>{ago(a.updated_at)}</td></tr>)}
+    </tbody></table></div>}
+    {editing && <KbArticleModal article={editing === 'new' ? null : editing} onSave={v => save(v, editing === 'new' ? undefined : editing.id)} onClose={() => setEditing(null)}/>}
+    {open && <Drawer title={open.title} onClose={() => setOpenId('')}>
+      {open.category && <p className="muted">Category: {open.category}</p>}
+      <p style={{ whiteSpace: 'pre-wrap', lineHeight: 1.6 }}>{open.body || 'No content yet.'}</p>
+      {isOp(role) && <div className="modal-actions"><button className="secondary-action" onClick={() => setEditing(open)}><Pencil size={14}/>Edit</button><button className="danger-action" onClick={() => remove(open)}>Delete</button></div>}
+    </Drawer>}
+  </section>;
+}
+function KbArticleModal({ article, onSave, onClose }: { article: KbArticle | null; onSave: (v: { title: string; body: string; category: string }) => void; onClose: () => void }) {
+  const [title, setTitle] = useState(article?.title ?? ''); const [body, setBody] = useState(article?.body ?? ''); const [category, setCategory] = useState(article?.category ?? ''); const [busy, setBusy] = useState(false);
+  return <Modal title={article ? 'Edit article' : 'New article'} icon={<MessageSquare size={17}/>} onClose={onClose} width={640}>
+    <form className="modal-form" onSubmit={async e => { e.preventDefault(); setBusy(true); await onSave({ title: title.trim(), body, category: category.trim() }); setBusy(false); }}>
+      <label className="span-2">Title<input value={title} onChange={e => setTitle(e.target.value)} required maxLength={160} autoFocus/></label>
+      <label className="span-2">Category <em className="optional">Optional</em><input value={category} onChange={e => setCategory(e.target.value)} maxLength={80} placeholder="e.g. Network"/></label>
+      <label className="span-2">Content<textarea rows={10} value={body} onChange={e => setBody(e.target.value)} placeholder="Steps, screenshots notes, links…"/></label>
+      <div className="modal-actions span-2"><button type="button" className="secondary-action" onClick={onClose} disabled={busy}>Cancel</button><button className="primary-action" disabled={busy || !title.trim()}>{busy ? 'Saving…' : article ? 'Save' : 'Create article'}</button></div>
+    </form>
+  </Modal>;
 }
