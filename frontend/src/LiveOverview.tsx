@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Globe2, Router, Server, Layers, Monitor, Plus, Activity, ArrowUpRight, Boxes } from 'lucide-react';
+import { Globe2, Router, Server, Layers, Monitor, Plus, Activity, ArrowUpRight, Boxes, HardDrive } from 'lucide-react';
 import { supabase, fmtBps } from './lib';
 import { LineChart } from './Chart';
 import { Checklist, EmptyState, type Prefs } from './ui';
@@ -18,8 +18,8 @@ const rel = (iso: string | null) => {
   if (s < 60) return `${s}s ago`; if (s < 3600) return `${Math.round(s / 60)} min ago`;
   if (s < 86400) return `${Math.round(s / 3600)} h ago`; return `${Math.round(s / 86400)} d ago`;
 };
-const kindIcon = (d: Device, size = 18) => d.device_type === 'esxi_host' ? <Layers size={size}/> : d.device_type === 'workstation' ? <Monitor size={size}/> : <Server size={size}/>;
-const kindLabel = (d: Device) => d.device_type === 'esxi_host' ? 'ESXi host' : d.device_type ?? 'device';
+const kindIcon = (d: Device, size = 18) => d.device_type === 'esxi_host' ? <Layers size={size}/> : d.device_type === 'esxi_vm' ? <HardDrive size={size}/> : d.device_type === 'workstation' ? <Monitor size={size}/> : <Server size={size}/>;
+const kindLabel = (d: Device) => d.device_type === 'esxi_host' ? 'ESXi host' : d.device_type === 'esxi_vm' ? 'VM' : d.device_type ?? 'device';
 
 function Gauge({ value, label }: { value: number | null; label: string }) {
   const C = 2 * Math.PI * 15;
@@ -29,7 +29,7 @@ function Gauge({ value, label }: { value: number | null; label: string }) {
   </div>;
 }
 
-export function LiveOverview({ devices, hosts, sites, networks, loading, go, organizationId, prefs, setPrefs }: { devices: Device[]; hosts: Device[]; sites: Site[]; networks: Net[]; loading: boolean; go: (s: string, tab?: string) => void; organizationId: string; prefs: Prefs; setPrefs: (p: Partial<Prefs>) => void }) {
+export function LiveOverview({ devices, hosts, vms = [], sites, networks, loading, go, organizationId, prefs, setPrefs }: { devices: Device[]; hosts: Device[]; vms?: Device[]; sites: Site[]; networks: Net[]; loading: boolean; go: (s: string, tab?: string) => void; organizationId: string; prefs: Prefs; setPrefs: (p: Partial<Prefs>) => void }) {
   const [rows, setRows] = useState<any[]>([]), [alerts, setAlerts] = useState<any[]>([]), [counts, setCounts] = useState({ uptime: 0, channels: 0 }), [filter, setFilter] = useState<'all' | 'online' | 'offline'>('all');
   useEffect(() => {
     let on = true; if (!supabase) return;
@@ -80,8 +80,18 @@ export function LiveOverview({ devices, hosts, sites, networks, loading, go, org
       const x = ((slot + 1) / (totalDevs + 1)) * 100; const y = slot % 2 ? 84 : 72; slot++;
       dNodes.push({ d, x, y, gx: g.x, gy: g.y });
     }));
-    return { gNodes, dNodes, hidden: all.length - used };
-  }, [sites, networks, all]);
+    // anchor each host's VMs near the host node instead of giving them their own site-level slot
+    dNodes.filter(n => n.d.device_type === 'esxi_host').forEach(hostNode => {
+      const childVms = vms.filter(v => v.parent_device_id === hostNode.d.id);
+      childVms.forEach((vm, vi) => {
+        if (used >= MAX) return; used++;
+        const ox = Math.min(98, Math.max(2, hostNode.x + (vi % 2 === 0 ? -4 : 4) * (Math.floor(vi / 2) + 1)));
+        const oy = Math.min(94, hostNode.y + 10 + Math.floor(vi / 2) * 6);
+        dNodes.push({ d: vm, x: ox, y: oy, gx: hostNode.x, gy: hostNode.y });
+      });
+    });
+    return { gNodes, dNodes, hidden: all.length + vms.length - used };
+  }, [sites, networks, all, vms]);
   const curve = (x1: number, y1: number, x2: number, y2: number) => { const a = x1 * 10, b = y1 * 4.8, c = x2 * 10, d = y2 * 4.8, m = (b + d) / 2; return `M${a} ${b} C${a} ${m} ${c} ${m} ${c} ${d}`; };
 
   const feed = [
@@ -112,7 +122,7 @@ export function LiveOverview({ devices, hosts, sites, networks, loading, go, org
         </svg>
         <div className="lv-node root" style={{ left: '50%', top: '9%' }}><span className="lv-nic"><Globe2 size={18}/></span><div><b>Internet</b><small>WAN</small></div></div>
         {map.gNodes.map((g, i) => <button key={g.key} className="lv-node site" style={{ left: `${g.x}%`, top: `${g.y}%`, animationDelay: `${0.1 + i * 0.06}s` }} onClick={() => go('Topology')}><span className="lv-nic"><Router size={18}/></span><div><b>{g.label}</b><small>{g.sub} · {g.devs.length} device{g.devs.length === 1 ? '' : 's'}</small></div></button>)}
-        {map.dNodes.map((n, i) => <button key={n.d.id} className={`lv-node dev ${isOnline(n.d) ? '' : 'off'}`} style={{ left: `${n.x}%`, top: `${n.y}%`, animationDelay: `${0.2 + i * 0.05}s` }} title={`${n.d.hostname}${n.d.ip_address ? ' · ' + n.d.ip_address : ''}`} onClick={() => go(n.d.device_type === 'esxi_host' ? 'Virtualization' : 'Devices')}><span className="lv-nic">{kindIcon(n.d)}</span><div><b>{n.d.hostname}</b><small>{n.d.ip_address ?? kindLabel(n.d)}</small></div></button>)}
+        {map.dNodes.map((n, i) => <button key={n.d.id} className={`lv-node dev ${isOnline(n.d) ? '' : 'off'} ${n.d.device_type === 'esxi_vm' ? 'vm' : ''}`} style={{ left: `${n.x}%`, top: `${n.y}%`, animationDelay: `${0.2 + i * 0.05}s` }} title={`${n.d.hostname}${n.d.ip_address ? ' · ' + n.d.ip_address : ''}`} onClick={() => go(n.d.device_type === 'esxi_host' || n.d.device_type === 'esxi_vm' ? 'Virtualization' : 'Devices')}><span className="lv-nic">{kindIcon(n.d, n.d.device_type === 'esxi_vm' ? 14 : 18)}</span><div><b>{n.d.hostname}</b><small>{n.d.ip_address ?? kindLabel(n.d)}</small></div></button>)}
         {map.hidden > 0 && <button className="lv-more" onClick={() => go('Devices')}>+{map.hidden} more</button>}
       </>}</div>
       <aside className="lv-feed"><div className="lv-feed-head"><b>Live events</b><span className="lv-rec">● LIVE</span></div>

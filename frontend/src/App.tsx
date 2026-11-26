@@ -1,5 +1,5 @@
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Activity, Pencil, Users, Bell, Boxes, Cable, ChevronDown, CircleHelp, LayoutDashboard, LogOut, Network, Search, Settings, ShieldCheck, ScrollText, Globe2, FileBarChart, ClipboardList, Gauge, MonitorUp, Zap, LockKeyhole, Eye, EyeOff, MapPin, Server, ArrowUpRight, UserRound, KeyRound, Sun, Moon, Languages, MoreHorizontal, Building2, Check, Plus, Trash2, RefreshCw, Layers, MessageSquare, Wrench, AlertTriangle, Crown, Sparkles, Copy, History, type LucideIcon } from 'lucide-react';
+import { Activity, Pencil, Users, Bell, Boxes, Cable, ChevronDown, CircleHelp, LayoutDashboard, LogOut, Network, Search, Settings, ShieldCheck, ScrollText, Globe2, FileBarChart, ClipboardList, Gauge, MonitorUp, Zap, LockKeyhole, Eye, EyeOff, MapPin, Server, ArrowUpRight, UserRound, KeyRound, Sun, Moon, Languages, MoreHorizontal, Building2, Check, Plus, Trash2, RefreshCw, Layers, MessageSquare, Wrench, AlertTriangle, Crown, Sparkles, Copy, History, HardDrive, type LucideIcon } from 'lucide-react';
 import type { Session, User } from '@supabase/supabase-js';
 
 type Device = { id: string; hostname: string; ip_address: string | null; status: string; device_type: string | null; last_seen_at: string | null; site_id?: string; archived_at?: string | null; agent_version?: string | null; parent_device_id?: string | null; os_name?: string | null };
@@ -242,9 +242,9 @@ export default function App() {
         {!membership ? <div className="panel access-panel"><div className="empty-icon"><LockKeyhole size={23}/></div><h2>No workspace access yet</h2><p>Your account is signed in, but it has not been added to an organization. Ask the system owner to assign your account.</p></div> : <>
           <Flash kind="error" msg={dataError ? 'Could not load workspace data: ' + dataError : ''}/>
           {dataLoading && <Skeleton rows={3}/>}
-          {page === 'Overview' && <LiveOverview devices={nonEsxiDevices} hosts={devices.filter(d => d.device_type === 'esxi_host')} sites={sites} networks={networks} loading={dataLoading} go={go} organizationId={membership.organization_id} prefs={prefs} setPrefs={setPrefs}/>}
+          {page === 'Overview' && <LiveOverview devices={nonEsxiDevices} hosts={devices.filter(d => d.device_type === 'esxi_host')} vms={devices.filter(d => d.device_type === 'esxi_vm')} sites={sites} networks={networks} loading={dataLoading} go={go} organizationId={membership.organization_id} prefs={prefs} setPrefs={setPrefs}/>}
           {page === 'Devices' && <DevicesPage devices={nonEsxiDevices} archivedDevices={archivedDevices} loading={dataLoading} organizationId={membership.organization_id} role={membership.role} accessToken={session.access_token} onRefresh={refresh} sites={sites}/>}
-          {page === 'Topology' && <TopologyPage sites={sites} networks={networks} devices={nonEsxiDevices}/>}
+          {page === 'Topology' && <TopologyPage sites={sites} networks={networks} devices={devices}/>}
           {page === 'Virtualization' && <VirtualizationPage devices={devices} sites={sites} organizationId={membership.organization_id} accessToken={session.access_token} role={membership.role}/>}
           {page === 'Traffic' && <TrafficPage organizationId={membership.organization_id}/>}
           {page === 'Alerts' && <AlertsPage organizationId={membership.organization_id} role={membership.role}/>}
@@ -375,9 +375,12 @@ function TopologyPage({sites,networks,devices}:{sites:Site[];networks:Net[];devi
       <div className="topo2-node site"><span className="topo2-icon"><MapPin size={16}/></span><div><b>{site.name}</b><small>{site.location||'Location not specified'}</small></div><span className="topo2-count">{siteDevs.length} device{siteDevs.length===1?'':'s'} · {onCount} online</span></div>
       <div className="topo2-branch">{nets.length===0
         ? <div className="topo2-leafless">No networks assigned.</div>
-        : nets.map(net=>{const nd=siteDevs;return <div className="topo2-net" key={net.id}>
+        : nets.map(net=>{const nd=siteDevs.filter(d=>d.device_type!=='esxi_vm');return <div className="topo2-net" key={net.id}>
           <div className="topo2-node net"><span className="topo2-icon"><Network size={15}/></span><div><b>{net.name}</b><small>{net.cidr||'CIDR not set'}</small></div></div>
-          <div className="topo2-devices">{nd.length===0?<span className="topo2-leafless">No devices reporting.</span>:nd.map(d=><span className={'topo2-dev '+deviceStatus(d)} key={d.id} title={d.ip_address??''}><i/>{d.hostname}</span>)}</div>
+          <div className="topo2-devices">{nd.length===0?<span className="topo2-leafless">No devices reporting.</span>:nd.map(d=>{const childVms=d.device_type==='esxi_host'?devices.filter(v=>v.device_type==='esxi_vm'&&v.parent_device_id===d.id):[];return <span className="topo2-dev-wrap" key={d.id}>
+            <span className={'topo2-dev '+deviceStatus(d)} title={d.ip_address??''}><i/>{d.hostname}{childVms.length>0&&<em className="topo2-vm-badge">{childVms.length} VM{childVms.length===1?'':'s'}</em>}</span>
+            {childVms.length>0&&<span className="topo2-vms">{childVms.map(vm=><span className={'topo2-dev virtual '+deviceStatus(vm)} key={vm.id} title={vm.ip_address??''}><HardDrive size={11}/>{vm.hostname}</span>)}</span>}
+          </span>;})}</div>
         </div>;})}</div>
      </div>;})}</div></section>)}
  {tab==='networks'&&<section className="panel page-panel"><div className="table-wrap"><table><thead><tr><Th t={nt} k="name">NETWORK</Th><Th t={nt} k="cidr">CIDR</Th><Th t={nt} k="site">SITE</Th><Th t={nt} k="devices">DEVICES</Th></tr></thead><tbody>{nt.rows.map(n=><tr key={n.id}><td>{n.name}</td><td>{n.cidr||'—'}</td><td>{sites.find(s=>s.id===n.site_id)?.name??'—'}</td><td>{devices.filter(d=>d.site_id===n.site_id).length}</td></tr>)}{!nt.rows.length&&<tr><td colSpan={4} className="empty">No networks available.</td></tr>}</tbody></table></div><Pager t={nt}/></section>}
