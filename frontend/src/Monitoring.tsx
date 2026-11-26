@@ -386,12 +386,13 @@ type Asset = { id: string; asset_tag: string; name: string; category: string; st
 export function AssetsPage(props: { organizationId: string; role: Role; token: string; devices: Dev[]; sites: { id: string; name: string }[] }) {
   const [module, setModule] = useState('assets');
   return <div className="sites-workspace">
-    <div className="filter-bar"><Tabs items={[{ id: 'assets', label: 'Assets' }, { id: 'accessories', label: 'Accessories' }, { id: 'consumables', label: 'Consumables' }, { id: 'licenses', label: 'Licenses' }, { id: 'components', label: 'Components' }]} active={module} onChange={setModule}/></div>
+    <div className="filter-bar"><Tabs items={[{ id: 'assets', label: 'Assets' }, { id: 'accessories', label: 'Accessories' }, { id: 'consumables', label: 'Consumables' }, { id: 'licenses', label: 'Licenses' }, { id: 'components', label: 'Components' }, { id: 'kits', label: 'Kits' }]} active={module} onChange={setModule}/></div>
     {module === 'assets' && <AssetsInventoryPage {...props}/>}
     {module === 'accessories' && <AccessoriesPage organizationId={props.organizationId} role={props.role} token={props.token} sites={props.sites}/>}
     {module === 'consumables' && <ConsumablesPage organizationId={props.organizationId} role={props.role} token={props.token} sites={props.sites}/>}
     {module === 'licenses' && <LicensesPage organizationId={props.organizationId} role={props.role} token={props.token} sites={props.sites}/>}
     {module === 'components' && <ComponentsPage organizationId={props.organizationId} role={props.role} token={props.token} sites={props.sites}/>}
+    {module === 'kits' && <KitsPage organizationId={props.organizationId} role={props.role} token={props.token} sites={props.sites}/>}
   </div>;
 }
 function AssetsInventoryPage({ organizationId, role, token, devices, sites }: { organizationId: string; role: Role; token: string; devices: Dev[]; sites: { id: string; name: string }[] }) {
@@ -909,6 +910,129 @@ function ComponentAssignModal({ component, assets, busy, onSave, onClose }: { co
       <label>Asset<Select value={assetId} onChange={e => setAssetId(e.target.value)}><option value="">Choose an asset</option>{assets.map(a => <option key={a.id} value={a.id}>{a.asset_tag} — {a.name}</option>)}</Select></label>
       <label>Quantity<input type="number" min={1} value={qty} onChange={e => setQty(Math.max(1, Number(e.target.value)))} required/></label>
       <div className="modal-actions span-2"><button type="button" className="secondary-action" onClick={onClose} disabled={busy}>Cancel</button><button className="primary-action" disabled={busy || !assetId}>{busy ? 'Assigning…' : 'Assign'}</button></div>
+    </form>
+  </Modal>;
+}
+
+// ---- Predefined Kits (Snipe-IT style: bundle of accessories/consumables/licenses handed
+// out together to one user in a single action) --------------------------------------------------
+type Kit = { id: string; name: string; site_id: string | null; notes: string | null };
+type KitItem = { id: string; kit_id: string; item_type: 'accessory' | 'consumable' | 'license'; item_id: string; qty: number };
+type KitCheckout = { id: string; kit_id: string; assigned_user_id: string | null; assigned_to: string | null; checked_out_at: string };
+function KitsPage({ organizationId, role, token, sites }: { organizationId: string; role: Role; token: string; sites: { id: string; name: string }[] }) {
+  const members = useOrgMembers(organizationId, token);
+  const [rows, setRows] = useState<Kit[]>([]); const [items, setItems] = useState<KitItem[]>([]); const [checkouts, setCheckouts] = useState<KitCheckout[]>([]);
+  const [accessories, setAccessories] = useState<Accessory[]>([]); const [consumables, setConsumables] = useState<Consumable[]>([]); const [licenses, setLicenses] = useState<License[]>([]);
+  const [loading, setLoading] = useState(true); const [err, setErr] = useState('');
+  const [editing, setEditing] = useState<Kit | 'new' | null>(null); const [checkingOut, setCheckingOut] = useState<Kit | null>(null); const [busy, setBusy] = useState('');
+  const load = useCallback(async () => {
+    setLoading(true); setErr('');
+    try {
+      const [k, a, c, l] = await Promise.all([
+        api<{ kits: Kit[]; items: KitItem[]; checkouts: KitCheckout[] }>(`/kits?organization_id=${organizationId}`, token),
+        api<{ accessories: Accessory[] }>(`/accessories?organization_id=${organizationId}`, token),
+        api<{ consumables: Consumable[] }>(`/consumables?organization_id=${organizationId}`, token),
+        api<{ licenses: License[] }>(`/licenses?organization_id=${organizationId}`, token),
+      ]);
+      setRows(k.kits); setItems(k.items); setCheckouts(k.checkouts); setAccessories(a.accessories); setConsumables(c.consumables); setLicenses(l.licenses);
+    } catch (e) { setErr(e instanceof Error ? e.message : 'Could not load kits.'); }
+    finally { setLoading(false); }
+  }, [organizationId, token]);
+  useEffect(() => { void load(); }, [load]);
+  const itemsFor = (kitId: string) => items.filter(i => i.kit_id === kitId);
+  const itemLabel = (i: KitItem) => {
+    const list = i.item_type === 'accessory' ? accessories : i.item_type === 'consumable' ? consumables : licenses;
+    return list.find(x => x.id === i.item_id)?.name ?? '(deleted item)';
+  };
+  const memberEmail = (id: string | null) => id ? (members.find(m => m.user_id === id)?.email ?? '—') : null;
+  const save = async (values: { name: string; site_id?: string | null; notes?: string; items: { item_type: string; item_id: string; qty: number }[] }, id?: string) => {
+    setBusy(id || 'new'); setErr('');
+    try {
+      if (id) await api(`/kits/${id}`, token, { method: 'PUT', body: { organization_id: organizationId, ...values } });
+      else await api('/kits', token, { method: 'POST', body: { organization_id: organizationId, ...values } });
+      toast(id ? 'Kit updated' : 'Kit created'); setEditing(null); await load();
+    } catch (e) { setErr(e instanceof Error ? e.message : 'Could not save that kit.'); }
+    finally { setBusy(''); }
+  };
+  const remove = async (k: Kit) => {
+    if (!await confirmDialog(`Delete kit "${k.name}"? This won't check in anything already handed out from it.`, { confirmText: 'Delete', danger: true })) return;
+    setBusy(k.id); setErr('');
+    try { await api(`/kits/${k.id}?organization_id=${organizationId}`, token, { method: 'DELETE' }); toast('Kit deleted'); await load(); }
+    catch (e) { setErr(e instanceof Error ? e.message : 'Could not delete that kit.'); }
+    finally { setBusy(''); }
+  };
+  const checkout = async (values: { assigned_user_id?: string | null; assigned_to?: string }) => {
+    if (!checkingOut) return;
+    setBusy(checkingOut.id); setErr('');
+    try { await api(`/kits/${checkingOut.id}/checkout`, token, { method: 'POST', body: { organization_id: organizationId, ...values } }); toast('Kit checked out'); setCheckingOut(null); await load(); }
+    catch (e) { setErr(e instanceof Error ? e.message : 'Could not check that kit out.'); }
+    finally { setBusy(''); }
+  };
+  const t = useTable(rows, (k, col) => col === 'items' ? itemsFor(k.id).length : (k as any)[col]);
+  return <>
+    <Flash kind="error" msg={err}/>
+    <div className="stats-grid">
+      <StatCard icon={<Boxes size={15}/>} tone="blue" label="Kits" value={rows.length}/>
+      <StatCard icon={<UserCheck size={15}/>} tone="green" label="Kit checkouts (recent)" value={checkouts.length}/>
+    </div>
+    <section className="panel page-panel"><div className="panel-head"><div><h3>Predefined kits</h3><p>{rows.length} kit{rows.length === 1 ? '' : 's'} · bundle accessories, consumables and licenses to hand out together.</p></div>
+      {isOp(role) && <button className="primary-action" onClick={() => setEditing('new')}><Plus size={15}/>Add kit</button>}</div>
+      {loading ? <Skeleton rows={3}/> : !t.rows.length ? <EmptyState icon={<Boxes size={22}/>} title="No kits yet" text="Build a kit once (e.g. 'New hire setup') and check it out to a person in one action instead of handing out each item separately."/> : <><div className="table-wrap"><table>
+        <thead><tr><Th t={t} k="name">NAME</Th><Th t={t} k="items">ITEMS</Th><th>RECENT CHECKOUTS</th><th>ACTIONS</th></tr></thead>
+        <tbody>{t.rows.map(k => { const kItems = itemsFor(k.id); const recent = checkouts.filter(c => c.kit_id === k.id).slice(0, 3);
+          return <tr key={k.id}>
+          <td><b>{k.name}</b>{k.notes && <div className="muted">{k.notes}</div>}</td>
+          <td>{kItems.length ? <ul className="plain-list">{kItems.map(i => <li key={i.id}>{itemLabel(i)} × {i.qty}</li>)}</ul> : '—'}</td>
+          <td>{recent.length ? <div className="checkout-list">{recent.map(c => <div key={c.id} className="checkout-row"><span>{memberEmail(c.assigned_user_id) ?? c.assigned_to} · {new Date(c.checked_out_at).toLocaleDateString()}</span></div>)}</div> : '—'}</td>
+          <td><div className="row-actions">
+            {isOp(role) && kItems.length > 0 && <button className="secondary-action" disabled={!!busy} onClick={() => setCheckingOut(k)}>Check out</button>}
+            {isOp(role) && <button className="mini-icon" title="Edit" disabled={busy === k.id} onClick={() => setEditing(k)}><Pencil size={15}/></button>}
+            {isOp(role) && <button className="mini-icon danger" title="Delete" disabled={busy === k.id} onClick={() => remove(k)}><Trash2 size={15}/></button>}
+          </div></td>
+        </tr>; })}</tbody>
+      </table></div><Pager t={t}/></>}
+    </section>
+    {editing && <KitModal kit={editing === 'new' ? null : editing} kitItems={editing === 'new' ? [] : itemsFor(editing.id)} sites={sites} accessories={accessories} consumables={consumables} licenses={licenses} busy={!!busy} onSave={values => save(values, editing === 'new' ? undefined : editing.id)} onClose={() => setEditing(null)}/>}
+    {checkingOut && <KitCheckoutModal kit={checkingOut} members={members} busy={!!busy} onSave={checkout} onClose={() => setCheckingOut(null)}/>}
+  </>;
+}
+function KitModal({ kit, kitItems, sites, accessories, consumables, licenses, busy, onSave, onClose }: {
+  kit: Kit | null; kitItems: KitItem[]; sites: { id: string; name: string }[]; accessories: Accessory[]; consumables: Consumable[]; licenses: License[]; busy: boolean;
+  onSave: (v: { name: string; site_id?: string | null; notes?: string; items: { item_type: string; item_id: string; qty: number }[] }) => void; onClose: () => void;
+}) {
+  const [name, setName] = useState(kit?.name ?? ''); const [siteId, setSiteId] = useState(kit?.site_id ?? ''); const [notes, setNotes] = useState(kit?.notes ?? '');
+  const [rows, setRows] = useState<{ item_type: string; item_id: string; qty: number }[]>(kitItems.map(i => ({ item_type: i.item_type, item_id: i.item_id, qty: i.qty })));
+  const addRow = () => setRows(prev => [...prev, { item_type: 'accessory', item_id: '', qty: 1 }]);
+  const updateRow = (idx: number, patch: Partial<{ item_type: string; item_id: string; qty: number }>) => setRows(prev => prev.map((r, i) => i === idx ? { ...r, ...patch } : r));
+  const removeRow = (idx: number) => setRows(prev => prev.filter((_, i) => i !== idx));
+  const optionsFor = (type: string) => type === 'accessory' ? accessories : type === 'consumable' ? consumables : licenses;
+  const valid = name.trim() && rows.every(r => r.item_id && r.qty > 0);
+  return <Modal title={kit ? 'Edit kit' : 'Add kit'} subtitle={kit?.name} icon={<Boxes size={17}/>} onClose={onClose}>
+    <form className="modal-form" onSubmit={e => { e.preventDefault(); onSave({ name, site_id: siteId || null, notes, items: rows }); }}>
+      <label>Name<input value={name} onChange={e => setName(e.target.value)} required maxLength={120} placeholder="New hire setup"/></label>
+      <label>Site <em className="optional">Optional</em><Select value={siteId} onChange={e => setSiteId(e.target.value)}><option value="">None</option>{sites.map(s => <option key={s.id} value={s.id}>{s.name}</option>)}</Select></label>
+      <label className="span-2">Notes<input value={notes} onChange={e => setNotes(e.target.value)} maxLength={500}/></label>
+      <div className="span-2">
+        <div className="panel-head" style={{ padding: 0, marginBottom: 8 }}><h4 style={{ margin: 0 }}>Items in this kit</h4><button type="button" className="secondary-action" onClick={addRow}><Plus size={14}/>Add item</button></div>
+        {!rows.length && <p className="muted">No items yet — add an accessory, consumable or license below.</p>}
+        {rows.map((r, idx) => <div key={idx} className="kit-item-row" style={{ display: 'flex', gap: 8, marginBottom: 6, alignItems: 'center' }}>
+          <Select value={r.item_type} onChange={e => updateRow(idx, { item_type: e.target.value, item_id: '' })}><option value="accessory">Accessory</option><option value="consumable">Consumable</option><option value="license">License</option></Select>
+          <Select value={r.item_id} onChange={e => updateRow(idx, { item_id: e.target.value })}><option value="">Choose…</option>{optionsFor(r.item_type).map((o: any) => <option key={o.id} value={o.id}>{o.name}</option>)}</Select>
+          <input type="number" min={1} value={r.qty} onChange={e => updateRow(idx, { qty: Math.max(1, Number(e.target.value)) })} style={{ width: 70 }}/>
+          <button type="button" className="mini-icon danger" title="Remove" onClick={() => removeRow(idx)}><Trash2 size={15}/></button>
+        </div>)}
+      </div>
+      <div className="modal-actions span-2"><button type="button" className="secondary-action" onClick={onClose} disabled={busy}>Cancel</button><button className="primary-action" disabled={busy || !valid}>{busy ? 'Saving…' : kit ? 'Save changes' : 'Add kit'}</button></div>
+    </form>
+  </Modal>;
+}
+function KitCheckoutModal({ kit, members, busy, onSave, onClose }: { kit: Kit; members: OrgMember[]; busy: boolean; onSave: (v: { assigned_user_id?: string | null; assigned_to?: string }) => void; onClose: () => void }) {
+  const [userId, setUserId] = useState(''); const [freeText, setFreeText] = useState('');
+  return <Modal title={`Check out kit "${kit.name}"`} icon={<UserCheck size={17}/>} onClose={onClose}>
+    <form className="modal-form" onSubmit={e => { e.preventDefault(); onSave({ assigned_user_id: userId || null, assigned_to: freeText }); }}>
+      <label>Check out to (user)<Select value={userId} onChange={e => setUserId(e.target.value)}><option value="">Choose a member</option>{members.map(m => <option key={m.user_id} value={m.user_id}>{m.email}</option>)}</Select></label>
+      <label>Or free text <em className="optional">Optional</em><input value={freeText} onChange={e => setFreeText(e.target.value)} maxLength={120} placeholder="Outside contact, or leave blank"/></label>
+      <div className="modal-actions span-2"><button type="button" className="secondary-action" onClick={onClose} disabled={busy}>Cancel</button><button className="primary-action" disabled={busy || (!userId && !freeText.trim())}>{busy ? 'Checking out…' : 'Check out'}</button></div>
     </form>
   </Modal>;
 }

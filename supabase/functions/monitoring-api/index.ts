@@ -1605,6 +1605,135 @@ async function handle(req: Request): Promise<Response> {
     return json({ ok: true, assignment_id: assignmentId });
   }
 
+  // ---- Predefined Kits (Snipe-IT style: bundle of accessories/consumables/licenses checked
+  // out together to one user in a single action) -----------------------------------------------
+  if (req.method === "GET" && path === "/kits") {
+    const organizationId = url.searchParams.get("organization_id") || "";
+    await requirePermission(req, organizationId, "assets", "view");
+    const [{ data: kits, error }, { data: items }, { data: checkouts }] = await Promise.all([
+      admin.from("kits").select("*").eq("organization_id", organizationId).order("created_at", { ascending: false }),
+      admin.from("kit_items").select("*").eq("organization_id", organizationId),
+      admin.from("kit_checkouts").select("*").eq("organization_id", organizationId).order("checked_out_at", { ascending: false }).limit(200),
+    ]);
+    if (error) return fail("Could not load kits", 500);
+    return json({ kits: kits || [], items: items || [], checkouts: checkouts || [] });
+  }
+
+  if (req.method === "POST" && path === "/kits") {
+    const body = await readJson(req);
+    const organizationId = String(body.organization_id || "");
+    const { user } = await requirePermission(req, organizationId, "assets", "create");
+    const name = String(body.name || "").trim();
+    if (!name) return fail("Name is required");
+    const items = Array.isArray(body.items) ? body.items : [];
+    for (const it of items) {
+      if (!["accessory", "consumable", "license"].includes(it.item_type)) return fail("Invalid kit item type");
+      if (!it.item_id) return fail("Each kit item needs an item_id");
+    }
+    const { data: kit, error } = await admin.from("kits").insert({
+      organization_id: organizationId, name, site_id: body.site_id || null, notes: body.notes ? String(body.notes).trim() : null,
+    }).select("*").single();
+    if (error) return fail("Could not create kit", 500);
+    if (items.length) {
+      const rows = items.map((it: any) => ({ kit_id: kit.id, organization_id: organizationId, item_type: it.item_type, item_id: it.item_id, qty: Math.max(1, Math.round(Number(it.qty) || 1)) }));
+      const { error: itemsError } = await admin.from("kit_items").insert(rows);
+      if (itemsError) return fail("Kit created, but could not save its items", 500);
+    }
+    await audit(organizationId, "user", user.id, "create_kit", "kit", kit.id, { name });
+    return json({ ok: true, kit }, 201);
+  }
+
+  const kitIdMatch = path.match(new RegExp(`^/kits/${uuidPart}$`, "i"));
+  if (req.method === "PUT" && kitIdMatch) {
+    const kitId = kitIdMatch[1];
+    const body = await readJson(req);
+    const organizationId = String(body.organization_id || "");
+    const { user } = await requirePermission(req, organizationId, "assets", "edit");
+    const { data: existing } = await admin.from("kits").select("id").eq("id", kitId).eq("organization_id", organizationId).maybeSingle();
+    if (!existing) return fail("Kit not found in this workspace", 404);
+    const patch: Record<string, unknown> = { updated_at: new Date().toISOString() };
+    for (const k of ["name", "site_id", "notes"]) {
+      if (body[k] !== undefined) patch[k] = typeof body[k] === "string" ? body[k].trim() || null : body[k];
+    }
+    const { data, error } = await admin.from("kits").update(patch).eq("id", kitId).select("*").single();
+    if (error) return fail("Could not update kit", 500);
+    if (Array.isArray(body.items)) {
+      for (const it of body.items) {
+        if (!["accessory", "consumable", "license"].includes(it.item_type)) return fail("Invalid kit item type");
+        if (!it.item_id) return fail("Each kit item needs an item_id");
+      }
+      await admin.from("kit_items").delete().eq("kit_id", kitId);
+      if (body.items.length) {
+        const rows = body.items.map((it: any) => ({ kit_id: kitId, organization_id: organizationId, item_type: it.item_type, item_id: it.item_id, qty: Math.max(1, Math.round(Number(it.qty) || 1)) }));
+        const { error: itemsError } = await admin.from("kit_items").insert(rows);
+        if (itemsError) return fail("Kit updated, but could not save its items", 500);
+      }
+    }
+    await audit(organizationId, "user", user.id, "update_kit", "kit", kitId, {});
+    return json({ ok: true, kit: data });
+  }
+
+  if (req.method === "DELETE" && kitIdMatch) {
+    const kitId = kitIdMatch[1];
+    const organizationId = url.searchParams.get("organization_id") || "";
+    const { user } = await requirePermission(req, organizationId, "assets", "delete");
+    const { data: existing } = await admin.from("kits").select("id").eq("id", kitId).eq("organization_id", organizationId).maybeSingle();
+    if (!existing) return fail("Kit not found in this workspace", 404);
+    const { error } = await admin.from("kits").delete().eq("id", kitId);
+    if (error) return fail("Could not delete kit", 500);
+    await audit(organizationId, "user", user.id, "delete_kit", "kit", kitId, {});
+    return json({ ok: true, kit_id: kitId });
+  }
+
+  const kitCheckoutMatch = path.match(new RegExp(`^/kits/${uuidPart}/checkout$`, "i"));
+  if (req.method === "POST" && kitCheckoutMatch) {
+    const kitId = kitCheckoutMatch[1];
+    const body = await readJson(req);
+    const organizationId = String(body.organization_id || "");
+    const { user } = await requirePermission(req, organizationId, "assets", "edit");
+    const { data: kit } = await admin.from("kits").select("id").eq("id", kitId).eq("organization_id", organizationId).maybeSingle();
+    if (!kit) return fail("Kit not found in this workspace", 404);
+    const { data: items } = await admin.from("kit_items").select("*").eq("kit_id", kitId);
+    if (!items || !items.length) return fail("This kit has no items to check out");
+    const assignedUserId = body.assigned_user_id || null;
+    const assignedTo = body.assigned_to ? String(body.assigned_to).trim() : null;
+    if (!assignedUserId && !assignedTo) return fail("Choose a member or enter who this kit is going to");
+
+    // Pre-flight: make sure every item has enough available before touching anything.
+    for (const it of items) {
+      if (it.item_type === "accessory") {
+        const { data: acc } = await admin.from("accessories").select("total_qty").eq("id", it.item_id).maybeSingle();
+        const { data: active } = await admin.from("accessory_checkouts").select("id").eq("accessory_id", it.item_id).is("checked_in_at", null);
+        if (!acc || (active || []).length + it.qty > acc.total_qty) return fail(`Not enough stock of one of the kit's accessories`, 409);
+      } else if (it.item_type === "consumable") {
+        const { data: con } = await admin.from("consumables").select("total_qty").eq("id", it.item_id).maybeSingle();
+        const { data: uses } = await admin.from("consumable_uses").select("qty").eq("consumable_id", it.item_id);
+        const used = (uses || []).reduce((s: number, u: any) => s + u.qty, 0);
+        if (!con || used + it.qty > con.total_qty) return fail(`Not enough stock of one of the kit's consumables`, 409);
+      } else if (it.item_type === "license") {
+        const { data: lic } = await admin.from("licenses").select("seats").eq("id", it.item_id).maybeSingle();
+        const { data: active } = await admin.from("license_seats").select("id").eq("license_id", it.item_id).is("checked_in_at", null);
+        if (!lic || (active || []).length + it.qty > lic.seats) return fail(`Not enough free seats on one of the kit's licenses`, 409);
+      }
+    }
+
+    // All clear - hand everything out.
+    for (const it of items) {
+      if (it.item_type === "accessory") {
+        const rows = Array.from({ length: it.qty }, () => ({ organization_id: organizationId, accessory_id: it.item_id, assigned_user_id: assignedUserId, assigned_to: assignedTo }));
+        await admin.from("accessory_checkouts").insert(rows);
+      } else if (it.item_type === "consumable") {
+        await admin.from("consumable_uses").insert({ organization_id: organizationId, consumable_id: it.item_id, assigned_user_id: assignedUserId, assigned_to: assignedTo, qty: it.qty });
+      } else if (it.item_type === "license") {
+        const rows = Array.from({ length: it.qty }, () => ({ organization_id: organizationId, license_id: it.item_id, assigned_user_id: assignedUserId, assigned_to: assignedTo }));
+        await admin.from("license_seats").insert(rows);
+      }
+    }
+    const { data: logRow } = await admin.from("kit_checkouts").insert({ kit_id: kitId, organization_id: organizationId, assigned_user_id: assignedUserId, assigned_to: assignedTo }).select("*").single();
+    await audit(organizationId, "user", user.id, "checkout_kit", "kit", kitId, { assigned_user_id: assignedUserId, assigned_to: assignedTo });
+    return json({ ok: true, checkout: logRow }, 201);
+  }
+
   // ---- Tickets (GLPI style helpdesk) ----------------------------------------------------------
   if (req.method === "GET" && path === "/tickets") {
     const organizationId = url.searchParams.get("organization_id") || "";
